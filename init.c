@@ -12,12 +12,16 @@ main(void)
 {
   int pid, wpid;
 
+  printf(1, "starting init\n");
+
   if(open("console", O_RDWR) < 0){
     mknod("console", 1, 1);
     open("console", O_RDWR);
   }
   dup(0);  // stdout
   dup(0);  // stderr
+
+  printf(1, "made it past dup\n");
 
   for(;;){
     printf(1, "init: starting sh\n");

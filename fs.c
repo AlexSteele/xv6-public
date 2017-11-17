@@ -370,7 +370,7 @@ iunlockput(struct inode *ip)
 
 // Return the disk block address of the nth block in inode ip.
 // If there is no such block, bmap allocates one.
-static uint
+uint
 bmap(struct inode *ip, uint bn)
 {
   uint addr, *a;
@@ -454,7 +454,8 @@ int
 readi(struct inode *ip, char *dst, uint off, uint n)
 {
   uint tot, m;
-  struct buf *bp;
+//  struct buf *bp;
+  struct page *pp;
 
   if(ip->type == T_DEV){
     if(ip->major < 0 || ip->major >= NDEV || !devsw[ip->major].read)
@@ -467,12 +468,20 @@ readi(struct inode *ip, char *dst, uint off, uint n)
   if(off + n > ip->size)
     n = ip->size - off;
 
-  for(tot=0; tot<n; tot+=m, off+=m, dst+=m){
-    bp = bread(ip->dev, bmap(ip, off/BSIZE));
-    m = min(n - tot, BSIZE - off%BSIZE);
-    memmove(dst, bp->data + off%BSIZE, m);
-    brelse(bp);
+  for (tot = 0; tot < n; tot += m, off += m, dst += m) {
+    pp = find_page(ip, off);
+    m = min(n - tot, PGSIZE - (off%PGSIZE));
+    memmove(dst, pp->data + (off%PGSIZE), m);
+    release_page(pp);
   }
+
+  /* for(tot=0; tot<n; tot+=m, off+=m, dst+=m){ */
+  /*   bp = bread(ip->dev, bmap(ip, off/BSIZE)); */
+  /*   m = min(n - tot, BSIZE - off%BSIZE); */
+  /*   memmove(dst, bp->data + off%BSIZE, m); */
+  /*   brelse(bp); */
+  /* } */
+
   return n;
 }
 
@@ -483,7 +492,8 @@ int
 writei(struct inode *ip, char *src, uint off, uint n)
 {
   uint tot, m;
-  struct buf *bp;
+//  struct buf *bp;
+  struct page *pp;
 
   if(ip->type == T_DEV){
     if(ip->major < 0 || ip->major >= NDEV || !devsw[ip->major].write)
@@ -496,18 +506,38 @@ writei(struct inode *ip, char *src, uint off, uint n)
   if(off + n > MAXFILE*BSIZE)
     return -1;
 
-  for(tot=0; tot<n; tot+=m, off+=m, src+=m){
-    bp = bread(ip->dev, bmap(ip, off/BSIZE));
-    m = min(n - tot, BSIZE - off%BSIZE);
-    memmove(bp->data + off%BSIZE, src, m);
-    log_write(bp);
-    brelse(bp);
+  for (tot = 0; tot < n; tot += m, off += m, src += m) {
+    pp = find_page(ip, off);
+    m = min(n - tot, PGSIZE - (off%PGSIZE));
+
+    // If we're appending to the file, pin the new
+    // blocks to the page.
+    // TODO: This is super dumb.
+    uint endoff = (off % PGSIZE) + m;
+    int nblocks = endoff / BSIZE;
+    int i;
+    for (i = pp->nblocks; i < nblocks; i++) {
+      pp->blocknos[i] = bmap(ip, (off + (i * BSIZE)) / BSIZE);
+    }
+    pp->nblocks = nblocks;
+
+    memmove(pp->data + (off%PGSIZE), src, m);
+    write_page(pp);
+    release_page(pp);
   }
 
-  if(n > 0 && off > ip->size){
-    ip->size = off;
-    iupdate(ip);
-  }
+  /* for(tot=0; tot<n; tot+=m, off+=m, src+=m){ */
+  /*   bp = bread(ip->dev, bmap(ip, off/BSIZE)); */
+  /*   m = min(n - tot, BSIZE - off%BSIZE); */
+  /*   memmove(bp->data + off%BSIZE, src, m); */
+  /*   log_write(bp); */
+  /*   brelse(bp); */
+  /* } */
+
+  /* if(n > 0 && off > ip->size){ */
+  /*   ip->size = off; */
+  /*   iupdate(ip); */
+  /* } */
   return n;
 }
 

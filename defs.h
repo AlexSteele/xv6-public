@@ -2,6 +2,7 @@ struct buf;
 struct context;
 struct file;
 struct inode;
+struct page;
 struct pipe;
 struct proc;
 struct rtcdate;
@@ -35,6 +36,7 @@ int             filestat(struct file*, struct stat*);
 int             filewrite(struct file*, char*, int n);
 
 // fs.c
+uint            bmap(struct inode*, uint);
 void            readsb(int dev, struct superblock *sb);
 int             dirlink(struct inode*, char*, uint);
 struct inode*   dirlookup(struct inode*, char*, uint*);
@@ -90,6 +92,12 @@ void            end_op();
 // mp.c
 extern int      ismp;
 void            mpinit(void);
+
+// pcache.c
+void            pcacheinit(void);
+struct page*    find_page(struct inode*, uint);
+void            write_page(struct page*);
+void            release_page(struct page*);
 
 // picirq.c
 void            picenable(int);

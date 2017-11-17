@@ -26,8 +26,12 @@
 #include "fs.h"
 #include "buf.h"
 
+#define PAGEBUFS 8
+#define NPAGE (NBUF / PAGEBUFS + 1)
+
 struct {
   struct spinlock lock;
+  uchar *pages[NPAGE];
   struct buf buf[NBUF];
 
   // Linked list of all buffers, through prev/next.
@@ -35,17 +39,33 @@ struct {
   struct buf head;
 } bcache;
 
+
 void
 binit(void)
 {
   struct buf *b;
+  int i;
 
   initlock(&bcache.lock, "bcache");
 
-//PAGEBREAK!
+  // Allocate memory for buffers
+  for (i = 0; i < NPAGE; i++) {
+    bcache.pages[i] = (uchar *) kalloc();
+    if (!bcache.pages[i]) {
+      panic("binit: insufficient pages");
+    }
+  }
+
+  // Initialize data pointers
+  for (i = 0; i < NBUF; i++) {
+    uchar *page = bcache.pages[i/PAGEBUFS];
+    bcache.buf[i].data = page + ((i % PAGEBUFS) * BSIZE);
+  }
+
   // Create linked list of buffers
   bcache.head.prev = &bcache.head;
   bcache.head.next = &bcache.head;
+
   for(b = bcache.buf; b < bcache.buf+NBUF; b++){
     b->next = bcache.head.next;
     b->prev = &bcache.head;

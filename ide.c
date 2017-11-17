@@ -139,8 +139,8 @@ iderw(struct buf *b)
 {
   struct buf **pp;
 
-  if(!holdingsleep(&b->lock))
-    panic("iderw: buf not locked");
+  /* if(!holdingsleep(&b->lock)) */
+  /*   panic("iderw: buf not locked"); */
   if((b->flags & (B_VALID|B_DIRTY)) == B_VALID)
     panic("iderw: nothing to do");
   if(b->dev != 0 && !havedisk1)
@@ -160,7 +160,9 @@ iderw(struct buf *b)
 
   // Wait for request to finish.
   while((b->flags & (B_VALID|B_DIRTY)) != B_VALID){
+    cprintf("going to sleep\n");
     sleep(b, &idelock);
+    cprintf("wakeup\n");
   }
 
 

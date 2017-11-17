@@ -19,6 +19,8 @@ exec(char *path, char **argv)
   pde_t *pgdir, *oldpgdir;
   struct proc *curproc = myproc();
 
+  cprintf("exec start\n");
+
   begin_op();
 
   if((ip = namei(path)) == 0){
@@ -30,10 +32,13 @@ exec(char *path, char **argv)
   pgdir = 0;
 
   // Check ELF header
-  if(readi(ip, (char*)&elf, 0, sizeof(elf)) != sizeof(elf))
+  cprintf("start readi()\n");
+  if(readi(ip, (char*)&elf, 0, sizeof(elf)) != sizeof(elf)) {
     goto bad;
-  if(elf.magic != ELF_MAGIC)
+  }
+  if(elf.magic != ELF_MAGIC) {
     goto bad;
+  }
 
   if((pgdir = setupkvm()) == 0)
     goto bad;
