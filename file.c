@@ -98,6 +98,8 @@ fileread(struct file *f, char *addr, int n)
 {
   int r;
 
+  //cprintf("fileread\n");
+
   if(f->readable == 0)
     return -1;
   if(f->type == FD_PIPE)
@@ -107,6 +109,7 @@ fileread(struct file *f, char *addr, int n)
     if((r = readi(f->ip, addr, f->off, n)) > 0)
       f->off += r;
     iunlock(f->ip);
+    //cprintf("fileread success\n");
     return r;
   }
   panic("fileread");

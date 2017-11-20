@@ -555,10 +555,13 @@ fourfiles(void)
     wait();
   }
 
+  printf(1, "made it to read check\n");
+
   for(i = 0; i < 2; i++){
     fname = names[i];
     fd = open(fname, 0);
     total = 0;
+    printf(1, "read\n");
     while((n = read(fd, buf, sizeof(buf))) > 0){
       for(j = 0; j < n; j++){
         if(buf[j] != '0'+i){
@@ -568,11 +571,13 @@ fourfiles(void)
       }
       total += n;
     }
+    printf(1, "close\n");
     close(fd);
     if(total != 12*500){
       printf(1, "wrong length %d\n", total);
       exit();
     }
+    printf(1, "unlink %s\n", fname);
     unlink(fname);
   }
 
@@ -1756,11 +1761,12 @@ main(int argc, char *argv[])
   }
   close(open("usertests.ran", O_CREATE));
 
-  argptest();
-  createdelete();
-  linkunlink();
-  concreate();
+//  argptest();
+//  createdelete();
+//  linkunlink();
+//  concreate();
   fourfiles();
+  exit();
   sharedfd();
 
   bigargtest();

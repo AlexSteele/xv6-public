@@ -16,7 +16,6 @@ sys_fork(void)
 int
 sys_exit(void)
 {
-  cprintf("sys_exit(). proc=%s\n", myproc()->name);
   exit();
   return 0;  // not reached
 }

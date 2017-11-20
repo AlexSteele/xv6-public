@@ -26,7 +26,10 @@
 #include "fs.h"
 #include "buf.h"
 
+// Number of disk blocks (struct buf) per page
 #define PAGEBUFS 8
+
+// Pages of memory needed for the bcache
 #define NPAGE (NBUF / PAGEBUFS + 1)
 
 struct {

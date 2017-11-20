@@ -24,6 +24,7 @@ pcacheinit(void)
   for (p = pcache.pages; p < pcache.pages + NPAGE; p++) {
     initsleeplock(&p->lock, "page");
     p->data = (uchar *) kalloc();
+    memset(p->data, 'f', PGSIZE); // TODO: rm
     if (!p->data) {
       panic("pcacheinit: insufficient pages");
     }
@@ -37,12 +38,17 @@ _find_page(struct inode *ip, uint off)
   struct page *pp;
   int i;
 
+  //cprintf("find_page\n");
+
   off = PGROUNDDOWN(off);
+
+  //cprintf("bmap()\n");
   start_block = bmap(ip, off/BSIZE);
+  //cprintf("end bmap()\n");
 
   acquire(&pcache.lock);
 
-  // Check if page is already cached.
+  // Check if page is already cached
   for (pp = pcache.pages; pp < pcache.pages + NPAGE; pp++) {
     if (pp->blocknos[0] == start_block) {
       pp->refcnt++;
@@ -52,7 +58,7 @@ _find_page(struct inode *ip, uint off)
     }
   }
 
-  // Otherwise, find an unreferenced page.
+  // Otherwise, find an unreferenced page
   for (pp = pcache.pages; pp < pcache.pages + NPAGE; pp++) {
     if (pp->refcnt == 0 && (pp->flags & B_DIRTY) == 0) {
       break;
@@ -62,9 +68,18 @@ _find_page(struct inode *ip, uint off)
     panic("find_page: no free pages");
   }
 
-  // Pin the file's blocks to the page
+  // Update refcnt and release pcache lock before
+  // pinning the file's blocks to avoid deadlock
+  // since bmap() may call iderw() to read ip's 
+  // indirect block from disk. iderw() sleeps so
+  // we can't hold pcache.lock when it's called.
   pp->refcnt = 1;
+  release(&pcache.lock);
+  acquiresleep(&pp->lock);
+
   pp->flags = 0;
+
+  // Pin the file's blocks to the page
   pp->blocknos[0] = start_block;
   off += BSIZE;
   for (i = 1; i < 8 && off < ip->size; i++) {
@@ -72,9 +87,6 @@ _find_page(struct inode *ip, uint off)
     off += BSIZE;
   }
   pp->nblocks = i;
-
-  release(&pcache.lock);
-  acquiresleep(&pp->lock);
   return pp;
 }
 

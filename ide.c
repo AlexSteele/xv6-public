@@ -160,9 +160,7 @@ iderw(struct buf *b)
 
   // Wait for request to finish.
   while((b->flags & (B_VALID|B_DIRTY)) != B_VALID){
-    cprintf("going to sleep\n");
     sleep(b, &idelock);
-    cprintf("wakeup\n");
   }
 
 

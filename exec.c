@@ -19,20 +19,16 @@ exec(char *path, char **argv)
   pde_t *pgdir, *oldpgdir;
   struct proc *curproc = myproc();
 
-  cprintf("exec start\n");
-
   begin_op();
 
   if((ip = namei(path)) == 0){
     end_op();
-    cprintf("exec: fail\n");
     return -1;
   }
   ilock(ip);
   pgdir = 0;
 
   // Check ELF header
-  cprintf("start readi()\n");
   if(readi(ip, (char*)&elf, 0, sizeof(elf)) != sizeof(elf)) {
     goto bad;
   }
