@@ -46,7 +46,8 @@ bzero(int dev, int bno)
 
   bp = bread(dev, bno);
   memset(bp->data, 0, BSIZE);
-  log_write(bp);
+//  log_write(bp);
+  bwrite(bp);
   brelse(bp);
 }
 
@@ -471,12 +472,6 @@ readi(struct inode *ip, char *dst, uint off, uint n)
   for (tot = 0; tot < n; tot += m, off += m, dst += m) {
     pp = find_page(ip, off);
     m = min(n - tot, PGSIZE - (off%PGSIZE));
-    if (m == 4096) {
-      cprintf("readi. memmove page=%p blocknos[0]=%d offset=%d m=%d\n", pp, pp->blocknos[0], off, m);
-      char buf[32] = {0};
-      memmove(buf, pp->data + (off%PGSIZE), 31);
-      cprintf("pp data: %s\n", buf);
-    }
     memmove(dst, pp->data + (off%PGSIZE), m);
     release_page(pp);
   }
@@ -512,9 +507,6 @@ writei(struct inode *ip, char *src, uint off, uint n)
   if(off + n > MAXFILE*BSIZE)
     return -1;
 
-  if (n > 1024) {
-    cprintf("writei n=%d\n", n);
-  }
   for (tot = 0; tot < n; tot += m, off += m, src += m) {
     pp = find_page(ip, off);
     m = min(n - tot, PGSIZE - (off%PGSIZE));
@@ -529,10 +521,6 @@ writei(struct inode *ip, char *src, uint off, uint n)
       pp->blocknos[i] = bmap(ip, (PGROUNDDOWN(off) + (i * BSIZE)) / BSIZE);
     }
     pp->nblocks = nblocks;
-
-    if (m > 1024) {
-      cprintf("writei: memmove to page=%p blocknos[0]=%d at offset %d\n", pp, pp->blocknos[0], off);
-    }
 
     memmove(pp->data + (off%PGSIZE), src, m);
     write_page(pp);

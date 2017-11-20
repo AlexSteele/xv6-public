@@ -134,6 +134,9 @@ bwrite(struct buf *b)
 {
   if(!holdingsleep(&b->lock))
     panic("bwrite");
+  if (b->blockno == 633) {
+    cprintf("bwrite block %d\n", 633);
+  }
   b->flags |= B_DIRTY;
   iderw(b);
 }

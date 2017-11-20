@@ -38,13 +38,9 @@ _find_page(struct inode *ip, uint off)
   struct page *pp;
   int i;
 
-  //cprintf("find_page\n");
-
   off = PGROUNDDOWN(off);
 
-  //cprintf("bmap()\n");
   start_block = bmap(ip, off/BSIZE);
-  //cprintf("end bmap()\n");
 
   acquire(&pcache.lock);
 
