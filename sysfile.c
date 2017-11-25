@@ -443,3 +443,22 @@ sys_pipe(void)
   fd[1] = fd1;
   return 0;
 }
+
+int
+sys_mmap(void)
+{
+  struct file *f;
+  int off;
+  int len;
+
+  if(argfd(0, 0, &f) < 0 || argint(1, &off) < 0 || argint(2, &len) < 0)
+    return 0;
+
+  if (f->type != FD_INODE)
+    return 0;
+
+  if (!f->readable || !f->writable)
+    return 0;
+
+  return mmap(myproc()->pgdir, f->ip, off, len); 
+}

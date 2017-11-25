@@ -121,6 +121,14 @@ find_page(struct inode *ip, uint off)
   return p;
 }
 
+// Read a page's pinned blocks from disk.
+// p->lock must be held.
+void
+read_page(struct page *p)
+{
+  panic("not implemented");
+}
+
 // Write a page to disk. p->lock must be held.
 void
 write_page(struct page *p)

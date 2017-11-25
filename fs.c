@@ -436,6 +436,12 @@ itrunc(struct inode *ip)
   iupdate(ip);
 }
 
+void
+iextend(struct inode *ip, uint size)
+{
+  panic("iextend"); 
+}
+
 // Copy stat information from inode.
 // Caller must hold ip->lock.
 void
@@ -540,6 +546,41 @@ writei(struct inode *ip, char *src, uint off, uint n)
     iupdate(ip);
   }
   return n;
+}
+
+void
+map_page(pde_t *pgdr, struct page *pp)
+{
+  panic("map page");
+}
+
+int
+mmap(pde_t *pgdir, struct inode *ip, uint off, uint len)
+{
+  void *addr;
+  uint eoff;
+
+  off = PGROUNDDOWN(off);
+  len = PGROUNDUP(len);
+
+  if (len == 0)
+    return 0;
+  if (off + len < off)
+    return 0;
+  if (off + len > ip->size)
+    iextend(ip, off + len);
+
+  for (eoff = off + len - PGSIZE; eoff >= off; eoff -= PGSIZE) {
+    struct page *p;
+
+    p = find_page(ip, eoff);
+    cprintf("%p\n", p);
+//  read_page(p);
+//  addr = map_page(pgdir, p);
+//    release_page(p); 
+  }
+  
+  return ((int) addr);
 }
 
 //PAGEBREAK!
