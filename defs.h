@@ -54,7 +54,7 @@ struct inode*   nameiparent(char*, char*);
 int             readi(struct inode*, char*, uint, uint);
 void            stati(struct inode*, struct stat*);
 int             writei(struct inode*, char*, uint, uint);
-int             mmap(pde_t*, struct inode*, uint, uint);
+void            extendi(struct inode*, uint);
 
 // ide.c
 void            ideinit(void);
@@ -195,6 +195,8 @@ void            switchuvm(struct proc*);
 void            switchkvm(void);
 int             copyout(pde_t*, uint, void*, uint);
 void            clearpteu(pde_t *pgdir, char *uva);
+struct page*    mmap(pde_t*, void*, struct inode*, uint, uint);
+void            munmap(pde_t*, void*, uint, struct page*);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))

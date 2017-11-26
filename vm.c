@@ -7,6 +7,10 @@
 #include "proc.h"
 #include "elf.h"
 #include "spinlock.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
+#include "buf.h"
 
 extern char data[];  // defined by kernel.ld
 pde_t *kpgdir;  // for use in scheduler()
@@ -132,6 +136,63 @@ mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
     pa += PGSIZE;
   }
   return 0;
+}
+
+// Map a file region into an address space.
+// off and len must be page size multiples.
+// Must be called with ip->lock held.
+struct page *
+mmap(pde_t *pgdir, void *vastart, struct inode *ip, uint off, uint len)
+{
+  struct page *mapstart = 0;
+  uint n;
+
+  if (off + len < off)
+    return 0;
+  if (off + len > ip->size)
+    extendi(ip, off + len);
+
+  for (n = off + len - PGSIZE; n >= off; n -= PGSIZE) {
+    struct page *pp;
+
+    pp = find_page(ip, n);
+    if (mappages(pgdir, ((void *) vastart + n), PGSIZE, 
+          V2P(pp->data), PTE_W|PTE_U)) {
+      panic("mmap");
+    }
+    pp->flags |= B_MAPPED;
+    pp->mapnext = mapstart;
+    pp->refcnt++;
+    mapstart = pp;
+    release_page(pp);
+    if (n == 0)
+      break; // Avoid unsigned wrap-around
+  }
+ 
+  return mapstart;
+}
+
+void
+munmap(pde_t *pgdir, void *vastart, uint len, struct page *mapstart)
+{
+  pte_t *pte;
+
+  for (; len > 0; len -= PGSIZE) {
+    if (!mapstart)
+      panic("munmap: missing page");
+    if ((pte = walkpgdir(pgdir, vastart, 0)) == 0)
+      panic("munmap: missing pte");
+    *pte = 0;
+    acquiresleep(&mapstart->lock);
+    mapstart->refcnt--;
+    if (mapstart->refcnt == 0) {
+      mapstart->flags &= ~(B_MAPPED); 
+      write_page(mapstart);
+    }
+    releasesleep(&mapstart->lock);
+    vastart += PGSIZE;
+    mapstart = mapstart->mapnext;
+  }
 }
 
 // There is one page table per process, plus one that's used when

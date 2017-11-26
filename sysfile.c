@@ -15,6 +15,7 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "memlayout.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -447,18 +448,97 @@ sys_pipe(void)
 int
 sys_mmap(void)
 {
+  struct proc *curproc = myproc();
+  struct mapping *mapping;
+  struct page *mapstart;
   struct file *f;
-  int off;
-  int len;
+  uint off;
+  uint len;
 
-  if(argfd(0, 0, &f) < 0 || argint(1, &off) < 0 || argint(2, &len) < 0)
+  if(argfd(0, 0, &f) < 0 || argint(1, (int *) &off) < 0 || argint(2, (int *) &len) < 0)
     return 0;
-
   if (f->type != FD_INODE)
     return 0;
-
   if (!f->readable || !f->writable)
     return 0;
 
-  return mmap(myproc()->pgdir, f->ip, off, len); 
+  off = PGROUNDDOWN(off);
+  len = PGROUNDUP(len);
+
+  if (len == 0)
+    return 0;
+  if (curproc->sz + len >= KERNBASE)
+    return 0;
+
+  // Find a free space for the mapping
+  mapping = &curproc->mmaps[0];
+  for (; mapping < curproc->mmaps + NOMAP; mapping++) {
+    if (!mapping->valid) {
+      break;
+    }
+  }
+  if (mapping >= curproc->mmaps + NOMAP) {
+    return 0;
+  }
+
+  begin_op();
+  ilock(f->ip);
+  mapstart = mmap(curproc->pgdir, (void *)curproc->sz, f->ip, off, len);
+  if (!mapstart) {
+    iunlock(f->ip);
+    end_op();
+    return 0;
+  }
+  // TODO: The refcount should be protected by icache.lock.
+  // See iget() in fs.c
+  f->ip->ref++;
+  iunlock(f->ip);
+  end_op();
+
+  mapping->valid = 1;
+  mapping->ip = f->ip;
+  mapping->vastart = (void *) curproc->sz;
+  mapping->len = len;
+  mapping->mapstart = mapstart;
+
+  curproc->sz += len;
+
+  return (int) mapping->vastart;
 }
+
+int
+sys_munmap(void)
+{
+  struct proc *curproc = myproc();
+  struct mapping *mapping;
+  int i;
+  void *vastart;
+
+  if (argint(0, &i) < 0)
+    return -1;
+  if (i < 0 || i >= curproc->sz)
+    return -1;
+  vastart = (void *)i;
+
+  // Find the mapping
+  for (i = 0; i < NOMAP; i++) {
+    mapping = &curproc->mmaps[i];
+    if (mapping->valid && mapping->vastart == vastart) {
+      break;
+    }
+  }
+  if (i == NOMAP) {
+    return -1;
+  }
+
+  // TODO: Remove duplication with proc.c
+  begin_op();
+  munmap(curproc->pgdir, mapping->vastart, mapping->len, 
+      mapping->mapstart);
+  iput(mapping->ip);
+  end_op();
+
+  curproc->mmaps[i].valid = 0;
+  return 0;
+}
+

@@ -54,12 +54,12 @@ _find_page(struct inode *ip, uint off)
   }
 
   // Otherwise, find an unreferenced page
-  for (pp = pcache.pages; pp < pcache.pages + NPAGE; pp++) {
+  for (pp = pcache.pages + NPAGE - 1; pp >= pcache.pages; pp--) {
     if (pp->refcnt == 0 && (pp->flags & B_DIRTY) == 0) {
       break;
     }
   }
-  if (pp == pcache.pages + NPAGE) {
+  if (pp < pcache.pages) {
     panic("find_page: no free pages");
   }
 

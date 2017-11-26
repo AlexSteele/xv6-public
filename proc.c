@@ -230,6 +230,7 @@ exit(void)
   struct proc *curproc = myproc();
   struct proc *p;
   int fd;
+  int i;
 
   if(curproc == initproc)
     panic("init exiting");
@@ -239,6 +240,19 @@ exit(void)
     if(curproc->ofile[fd]){
       fileclose(curproc->ofile[fd]);
       curproc->ofile[fd] = 0;
+    }
+  }
+
+  // Unmap memory-mapped files
+  for (i = 0; i < NOMAP; i++) {
+    struct mapping *mapping = &curproc->mmaps[i];
+    if (mapping->valid) {
+      begin_op();
+      munmap(curproc->pgdir, mapping->vastart, mapping->len, 
+          mapping->mapstart); 
+      iput(mapping->ip);
+      end_op();
+      mapping->valid = 0;
     }
   }
 

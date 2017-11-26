@@ -32,6 +32,15 @@ struct context {
   uint eip;
 };
 
+// Descriptor for a memory-mapped file region
+struct mapping {
+  int valid;             // Is-valid flag
+  struct inode *ip;      // The file's inode
+  void *vastart;         // Starting virtual address
+  uint len;              // Length
+  struct page *mapstart; // First page cache page
+};
+
 enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
 // Per-process state
@@ -47,6 +56,7 @@ struct proc {
   void *chan;                  // If non-zero, sleeping on chan
   int killed;                  // If non-zero, have been killed
   struct file *ofile[NOFILE];  // Open files
+  struct mapping mmaps[NOMAP]; // Memory-mapped files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
 };
