@@ -180,6 +180,7 @@ void            uartintr(void);
 void            uartputc(int);
 
 // vm.c
+void            vminit(void);
 void            seginit(void);
 void            kvmalloc(void);
 pde_t*          setupkvm(void);

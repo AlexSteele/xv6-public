@@ -30,6 +30,7 @@ main(void)
   tvinit();        // trap vectors
   binit();         // buffer cache
   pcacheinit();    // page cache
+  vminit();        // virtual mem
   fileinit();      // file table
   ideinit();       // disk 
   startothers();   // start other processors

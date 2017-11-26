@@ -6,9 +6,64 @@
 #include "mmu.h"
 #include "proc.h"
 #include "elf.h"
+#include "spinlock.h"
 
 extern char data[];  // defined by kernel.ld
 pde_t *kpgdir;  // for use in scheduler()
+
+// Bitmap with an entry for each page of physical
+// memory. Bit i is set if physical page i is mapped
+// into a process' address space AND is owned by the 
+// process (and thus must be freed when the process exits).
+static uchar vmmap[1 << 17];
+static struct spinlock vmlock;
+
+#define VMIDX(pa) ((((uint) pa) / PGSIZE) / 8)
+#define VMOFF(pa) ((((uint) pa) / PGSIZE) % 8)
+
+void
+vminit(void)
+{
+  initlock(&vmlock, "vmlock");
+}
+
+// Allocate a page of user memory.
+static char *
+vmalloc(void)
+{
+  char *va;
+  uint pa;
+
+  acquire(&vmlock);
+  va = kalloc(); 
+  if (va) {
+    pa = V2P(va);
+    vmmap[VMIDX(pa)] |= (1 << VMOFF(pa));
+  }
+  release(&vmlock);
+  return va;
+}
+
+// Free a page of user memory if it
+// was allocated with vmalloc. 
+static void
+vmfree(char *va)
+{
+  uint pa = V2P(va);
+  int idx = VMIDX(pa);
+  int off = VMOFF(pa);
+
+  acquire(&vmlock);
+  if (vmmap[idx] & (1 << off)) {
+    kfree(va);
+    vmmap[idx] &= ~(1 << off);
+  } else {
+    // TODO: remove
+    panic("vmfree");
+  }
+  release(&vmlock);
+}
+
 
 // Set up CPU's kernel segment descriptors.
 // Run once on entry on each CPU.
@@ -186,7 +241,7 @@ inituvm(pde_t *pgdir, char *init, uint sz)
 
   if(sz >= PGSIZE)
     panic("inituvm: more than a page");
-  mem = kalloc();
+  mem = vmalloc();
   memset(mem, 0, PGSIZE);
   mappages(pgdir, 0, PGSIZE, V2P(mem), PTE_W|PTE_U);
   memmove(mem, init, sz);
@@ -231,7 +286,7 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
 
   a = PGROUNDUP(oldsz);
   for(; a < newsz; a += PGSIZE){
-    mem = kalloc();
+    mem = vmalloc();
     if(mem == 0){
       cprintf("allocuvm out of memory\n");
       deallocuvm(pgdir, newsz, oldsz);
@@ -241,7 +296,7 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
     if(mappages(pgdir, (char*)a, PGSIZE, V2P(mem), PTE_W|PTE_U) < 0){
       cprintf("allocuvm out of memory (2)\n");
       deallocuvm(pgdir, newsz, oldsz);
-      kfree(mem);
+      vmfree(mem);
       return 0;
     }
   }
@@ -270,8 +325,7 @@ deallocuvm(pde_t *pgdir, uint oldsz, uint newsz)
       pa = PTE_ADDR(*pte);
       if(pa == 0)
         panic("kfree");
-      char *v = P2V(pa);
-      kfree(v);
+      vmfree(P2V(pa));
       *pte = 0;
     }
   }
@@ -329,7 +383,7 @@ copyuvm(pde_t *pgdir, uint sz)
       panic("copyuvm: page not present");
     pa = PTE_ADDR(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
+    if((mem = vmalloc()) == 0)
       goto bad;
     memmove(mem, (char*)P2V(pa), PGSIZE);
     if(mappages(d, (void*)i, PGSIZE, V2P(mem), flags) < 0)

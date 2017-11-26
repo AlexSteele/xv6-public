@@ -24,7 +24,6 @@ pcacheinit(void)
   for (p = pcache.pages; p < pcache.pages + NPAGE; p++) {
     initsleeplock(&p->lock, "page");
     p->data = (uchar *) kalloc();
-    memset(p->data, 'f', PGSIZE); // TODO: rm
     if (!p->data) {
       panic("pcacheinit: insufficient pages");
     }

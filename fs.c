@@ -575,7 +575,6 @@ mmap(pde_t *pgdir, struct inode *ip, uint off, uint len)
 
     p = find_page(ip, eoff);
     cprintf("%p\n", p);
-//  read_page(p);
 //  addr = map_page(pgdir, p);
 //    release_page(p); 
   }
