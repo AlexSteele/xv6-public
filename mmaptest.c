@@ -47,23 +47,17 @@ basicrw(void)
 
   printf(1, "basicrw test\n");
 
-  fd = open(test_file, O_CREATE|O_RDWR);
-  check(fd > 0, "open");
-
+  check((fd = open(test_file, O_CREATE|O_RDWR)) > 0, "open");
   for (i = 0; i < niter; i++) {
     check(write(fd, msg, len) == len, "write");
   }
-
   close(fd);
 
   // Check reads match the file
-  fd = open(test_file, O_RDWR);
-  check(fd > 0, "open (2)");
+  check((fd = open(test_file, O_RDWR)) > 0, "open (2)");
+  check((addr = mmap(fd, 0, 8192)) > 0, "mmap");
 
-  addr = mmap(fd, 0, 8192);
-  check(addr > 0, "mmap");
-
-  // Should be able to close the file
+  // Should be able to close the file first
   close(fd);
 
   for (i = 0; i < niter; i++) {
@@ -79,15 +73,12 @@ basicrw(void)
 
   check(munmap(addr) == 0, "munmap");
 
-  fd = open(test_file, O_RDONLY);
-  check(fd > 0, "open (3)");
-
+  check((fd = open(test_file, O_RDONLY)) > 0, "open (3)");
   for (i = 0; i < niter; i++) {
     char buf[128];
     check(read(fd, buf, len) == len, "read");
     check(strcmp(msg2, buf) == 0, "strcmp (2)");
   }
-
   close(fd);
 
   printf(1, "ok\n");
@@ -148,8 +139,42 @@ unlinktest(void)
   check(munmap(addr) == 0, "munmap");
 
   // Now file should be gone.
-  check(open(test_file, O_RDONLY) < 0, "open after mmap");
+  check(open(test_file, O_RDONLY) < 0, "open after unlink");
 
+  printf(1, "ok\n");
+}
+
+// A process should be able to map the same file
+// region multiple times.
+void
+dupmaps(void)
+{
+  int fd;
+  char *addr1;
+  char *addr2;
+
+  printf(1, "dupmaps\n");
+
+  check((fd = open(test_file, O_CREATE|O_RDWR)) > 0, "open");
+  check((addr1 = mmap(fd, 0, 4096)) > 0, "mmap (1)");
+  check((addr2 = mmap(fd, 0, 4096)) > 0, "mmap (2)");
+
+  check(addr1 != addr2, "addr1 == addr2");
+
+  addr1[0] = 'a';
+  addr2[1] = 'b';
+
+  check(addr2[0] == 'a', "addr2 != addr1");
+  check(addr1[1] == 'b', "addr1 != addr2");
+
+  check(munmap(addr1) == 0, "munmap (1)");
+
+  check(addr2[0] == 'a', "addr2[0] changed");
+  check(addr2[1] == 'b', "addr2[1] changed");
+
+  check(munmap(addr2) == 0, "munmap (2)");
+
+  close(fd);
   printf(1, "ok\n");
 }
 
@@ -160,8 +185,6 @@ forktest(void)
   int len = strlen(msg);
   char *addr;
   int fd;
-  int pid;
-  int rc;
   int i;
 
   printf(1, "forktest\n");
@@ -175,9 +198,7 @@ forktest(void)
   // Write initial bytes from parent proc
   memmove(addr, msg, len);
 
-  pid = fork();
-  check(pid >= 0, "fork failed");
-  if (pid == 0) {
+  if (fork() == 0) {
     char buf[128];
 
     close(fd);
@@ -193,8 +214,7 @@ forktest(void)
     }
 
     // Unmap region
-    rc = munmap(addr);
-    check(rc == 0, "child munmap");
+    check(munmap(addr) == 0, "child munmap");
     exit();
   }
   wait();
@@ -206,8 +226,7 @@ forktest(void)
     check(strcmp(msg, buf) == 0, "strcmp from parent");
   }
 
-  rc = munmap(addr);
-  check(rc == 0, "parent munmap");
+  check(munmap(addr) == 0, "parent munmap");
 
   printf(1, "ok\n");
 }
@@ -276,6 +295,68 @@ regionoverlap(void)
   printf(1, "ok\n");
 }
 
+// Killing a process with an open file mapping should
+// correctly clean up virtual memory. If two processes
+// share a mapping and one is killed, the mapping of the
+// running process should remain valid.
+void
+killtest(void)
+{
+  char *addr;
+  char *addr2;
+  int fd;
+  int pid;
+  int pipefds[2];
+  char buf[1];
+
+  printf(1, "killtest\n");
+
+  check((fd = open(test_file, O_CREATE|O_RDWR)) > 0, "open");
+  check((addr = mmap(fd, 0, 4096)) > 0, "mmap from parent (1)");
+  check((addr2 = mmap(fd, 4096, 8192)) > 0, "mmap from parent (2)");
+  check(pipe(pipefds) == 0, "pipe");
+
+  pid = fork();
+  if (pid == 0) {
+    char *addr3;
+    char *addr4;
+
+    close(pipefds[0]);
+
+    check((addr3 = mmap(fd, 0, 8192)) > 0, "mmap from child (1)");
+    check((addr4 = mmap(fd, 0, 4096)) > 0, "mmap from child (2)");
+
+    check(munmap(addr) == 0, "munmap from child (1)");
+    check(munmap(addr3) == 0, "munmap from child (2)");
+
+    // Signal we're ready to parent
+    check(write(pipefds[1], "ready", sizeof("ready")) >= 0, "write");
+    close(pipefds[1]);
+
+    // Wait to be killed by parent
+    while (1)
+      ;
+  }
+  close(pipefds[1]);
+
+  // Wait for signal from child
+  check(read(pipefds[0], buf, sizeof(buf)) >= 0, "read");
+  close(pipefds[0]);
+
+  // Kill child
+  check(kill(pid) == 0, "kill");
+  wait();
+
+  // Store to mapped regions should still succeed
+  addr[0] = 'a';
+  addr2[0] = 'a';
+
+  check(munmap(addr) == 0, "munmap from parent (1)");
+  check(munmap(addr2) == 0, "munmap from parent (2)");
+  close(fd);
+  printf(1, "ok\n");
+}
+
 int
 main(void)
 {
@@ -285,8 +366,10 @@ main(void)
   basicrw();
   unmap();
   unlinktest();
+  dupmaps();
   forktest();
   regionoverlap();
+  killtest();
 
   printf(1, "success\n");
   exit();

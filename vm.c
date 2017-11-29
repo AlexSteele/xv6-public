@@ -17,7 +17,7 @@ pde_t *kpgdir;  // for use in scheduler()
 
 // Bitmap with an entry for each page of physical
 // memory. Bit i is set if physical page i is mapped
-// into a process' address space AND is owned by the 
+// into a process' address space AND is owned by the
 // process (and thus must be freed when the process exits
 // and copied when the process forks).
 static uchar vmmap[1 << 17];
@@ -40,7 +40,7 @@ vmalloc(void)
   uint pa;
 
   acquire(&vmlock);
-  va = kalloc(); 
+  va = kalloc();
   if (va) {
     pa = V2P(va);
     vmmap[VMIDX(pa)] |= (1 << VMOFF(pa));
@@ -50,7 +50,7 @@ vmalloc(void)
 }
 
 // Free a page of user memory if it
-// was allocated with vmalloc. 
+// was allocated with vmalloc.
 static void
 vmfree(char *va)
 {
@@ -157,25 +157,33 @@ mmap(pde_t *pgdir, void *vastart, struct inode *ip, uint off, uint len)
     struct page *pp;
 
     pp = find_page(ip, eoff);
-    if (mappages(pgdir, ((void *) vastart + eoff - off), PGSIZE, 
+    if (mappages(pgdir, ((void *) vastart + eoff - off), PGSIZE,
           V2P(pp->data), PTE_W|PTE_U)) {
-      panic("mmap");
+      panic("mmap: mappages failed");
     }
     pp->flags |= B_MAPPED;
-    pp->mapnext = mapstart;
     pp->refcnt++;
+
+    if (pp->mapnext) {
+      if (mapstart && pp->mapnext != mapstart)
+        panic("mmap: inconsistent mappings");
+    } else {
+      pp->mapnext = mapstart;
+    }
+
     mapstart = pp;
     release_page(pp);
     if (eoff == 0)
       break; // Avoid unsigned wrap-around
   }
- 
+
   return mapstart;
 }
 
 void
 munmap(pde_t *pgdir, void *vastart, uint len, struct page *mapstart)
 {
+  struct page *next;
   pte_t *pte;
 
   for (; len > 0; len -= PGSIZE) {
@@ -186,13 +194,15 @@ munmap(pde_t *pgdir, void *vastart, uint len, struct page *mapstart)
     *pte = 0;
     acquiresleep(&mapstart->lock);
     mapstart->refcnt--;
+    next = mapstart->mapnext;
     if (mapstart->refcnt == 0) {
-      mapstart->flags &= ~(B_MAPPED); 
+      mapstart->flags &= ~(B_MAPPED);
+      mapstart->mapnext = 0;
       write_page(mapstart);
     }
     releasesleep(&mapstart->lock);
     vastart += PGSIZE;
-    mapstart = mapstart->mapnext;
+    mapstart = next;
   }
 }
 
@@ -443,7 +453,7 @@ copyuvm(pde_t *pgdir, uint sz)
       panic("copyuvm: pte should exist");
     if(!(*pte & PTE_P)) {
 
-      // Page was unmapped by munmap. 
+      // Page was unmapped by munmap.
       continue;
 //      panic("copyuvm: page not present");
     }
@@ -516,4 +526,3 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
 // Blank page.
 //PAGEBREAK!
 // Blank page.
-

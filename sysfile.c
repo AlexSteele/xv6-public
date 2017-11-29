@@ -519,6 +519,7 @@ sys_munmap(void)
     return -1;
   if (i < 0 || i >= curproc->sz)
     return -1;
+
   vastart = (void *)i;
 
   // Find the mapping
