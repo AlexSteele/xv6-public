@@ -38,9 +38,7 @@ _find_page(struct inode *ip, uint off)
   int i;
 
   off = PGROUNDDOWN(off);
-
   start_block = bmap(ip, off/BSIZE);
-
   acquire(&pcache.lock);
 
   // Check if page is already cached
@@ -77,7 +75,7 @@ _find_page(struct inode *ip, uint off)
   // Pin the file's blocks to the page
   pp->blocknos[0] = start_block;
   off += BSIZE;
-  for (i = 1; i < 8 && off < ip->size; i++) {
+  for (i = 1; i < 8 && off / BSIZE < MAXFILE; i++) {
     pp->blocknos[i] = bmap(ip, off/BSIZE);
     off += BSIZE;
   }
@@ -118,14 +116,6 @@ find_page(struct inode *ip, uint off)
     pagerw(p);
   }
   return p;
-}
-
-// Read a page's pinned blocks from disk.
-// p->lock must be held.
-void
-read_page(struct page *p)
-{
-  panic("not implemented");
 }
 
 // Write a page to disk. p->lock must be held.
