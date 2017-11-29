@@ -22,8 +22,8 @@ argtest(void)
 
   printf(1, "argtest\n");
 
-//  addr = mmap(1, 0, 4096);
-//  check(addr == 0, "mapped stdin");
+  addr = mmap(1, 0, 4096);
+  check(addr == 0, "mapped stdin");
 
   addr = mmap(3, 0, 4096);
   check(addr == 0, "mapped bad descriptor");
@@ -106,7 +106,7 @@ unmap(void)
 
     fd = open(test_file, O_CREATE|O_RDWR);
     check(fd > 0, "open");
- 
+
     addr = mmap(fd, 0, 4096);
     check(addr > 0, "mmap");
 
@@ -153,7 +153,7 @@ unlinktest(void)
   printf(1, "ok\n");
 }
 
-void 
+void
 forktest(void)
 {
   char *msg = "12345678";
@@ -214,7 +214,7 @@ forktest(void)
 
 // Different processes should be able to mmap overlapping
 // regions of a file.
-void 
+void
 regionoverlap(void)
 {
   char *msg = "abcdefghijklmnopqrstuv";

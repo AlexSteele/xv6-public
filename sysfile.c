@@ -481,8 +481,13 @@ sys_mmap(void)
     return 0;
   }
 
-  begin_op();
   ilock(f->ip);
+  if (f->ip->type != T_FILE) {
+    iunlock(f->ip);
+    return 0;
+  }
+
+  begin_op();
   mapstart = mmap(curproc->pgdir, (void *)curproc->sz, f->ip, off, len);
   iunlock(f->ip);
   end_op();
