@@ -35,7 +35,7 @@ struct context {
 // Descriptor for a memory-mapped file region
 struct mapping {
   int valid;             // Is-valid flag
-  struct inode *ip;      // The file's inode
+  struct file *fp;       // The mapped file
   void *vastart;         // Starting virtual address
   uint len;              // Length
   struct page *mapstart; // First page cache page

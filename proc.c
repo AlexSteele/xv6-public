@@ -6,6 +6,8 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include "sleeplock.h"
+#include "buf.h"
 
 struct {
   struct spinlock lock;
@@ -203,9 +205,28 @@ fork(void)
   // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
 
-  for(i = 0; i < NOFILE; i++)
-    if(curproc->ofile[i])
+  // Copy open files.
+  for (i = 0; i < NOFILE; i++) {
+    if (curproc->ofile[i]) {
       np->ofile[i] = filedup(curproc->ofile[i]);
+    }
+  }
+
+  // Duplicate memory-mapped file regions.
+  // TODO: Sleep lock in fork?
+  for (i = 0; i < NOMAP; i++) {
+    if (curproc->mmaps[i].valid) {
+      struct mapping *mmold = &curproc->mmaps[i];
+      struct mapping *mmnew = &np->mmaps[i];
+
+      memmove(mmnew, mmold, sizeof(struct mapping));
+      mmnew->fp = filedup(mmold->fp);
+      acquiresleep(&mmnew->mapstart->lock);
+      mmnew->mapstart->refcnt++;
+      releasesleep(&mmnew->mapstart->lock);
+    }
+  }
+
   np->cwd = idup(curproc->cwd);
 
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
@@ -250,7 +271,7 @@ exit(void)
       begin_op();
       munmap(curproc->pgdir, mapping->vastart, mapping->len, 
           mapping->mapstart); 
-      iput(mapping->ip);
+      fileclose(mapping->fp);
       end_op();
       mapping->valid = 0;
     }

@@ -3,7 +3,7 @@
 #include "types.h"
 #include "user.h"
 
-char *fname = "sample.txt";
+char *test_file = "testfile.txt";
 
 void
 check(int cond, char *msg)
@@ -47,7 +47,7 @@ basicrw(void)
 
   printf(1, "basicrw test\n");
 
-  fd = open(fname, O_CREATE|O_RDWR);
+  fd = open(test_file, O_CREATE|O_RDWR);
   check(fd > 0, "open");
 
   for (i = 0; i < niter; i++) {
@@ -57,7 +57,7 @@ basicrw(void)
   close(fd);
 
   // Check reads match the file
-  fd = open(fname, O_RDWR);
+  fd = open(test_file, O_RDWR);
   check(fd > 0, "open (2)");
 
   addr = mmap(fd, 0, 8192);
@@ -79,7 +79,7 @@ basicrw(void)
 
   check(munmap(addr) == 0, "munmap");
 
-  fd = open(fname, O_RDONLY);
+  fd = open(test_file, O_RDONLY);
   check(fd > 0, "open (3)");
 
   for (i = 0; i < niter; i++) {
@@ -93,7 +93,68 @@ basicrw(void)
   printf(1, "ok\n");
 }
 
-void forktest(void)
+// Unmapping a region should make its pages unaccessible.
+void
+unmap(void)
+{
+
+  printf(1, "unmap\n");
+
+  if (fork() == 0) {
+    int fd;
+    char *addr;
+
+    fd = open(test_file, O_CREATE|O_RDWR);
+    check(fd > 0, "open");
+ 
+    addr = mmap(fd, 0, 4096);
+    check(addr > 0, "mmap");
+
+    check(munmap(addr) == 0, "munmap");
+
+    // This should cause a page fault
+    printf(1, "should see page fault\n");
+    addr[0] = 'a';
+
+    check(0, "able to access unmapped region");
+  }
+  wait();
+  printf(1, "ok\n");
+}
+
+// A file unlinked while it is mmapped should not
+// be removed from disk until after it is unmapped.
+void
+unlinktest(void)
+{
+  char *addr;
+  int fd;
+
+  printf(1, "unlinktest\n");
+
+  fd = open(test_file, O_CREATE|O_RDWR);
+  check(fd > 0, "open");
+
+  addr = mmap(fd, 0, 4096);
+  check(addr > 0, "mmap");
+
+  check(close(fd) == 0, "close");
+  check(unlink(test_file) == 0, "unlink");
+
+  memmove(addr, "abcdefg", strlen("abcdefg"));
+
+  // Moment of truth. Unmapping file should write
+  // contents to disk without issue despite unlink().
+  check(munmap(addr) == 0, "munmap");
+
+  // Now file should be gone.
+  check(open(test_file, O_RDONLY) < 0, "open after mmap");
+
+  printf(1, "ok\n");
+}
+
+void 
+forktest(void)
 {
   char *msg = "12345678";
   int len = strlen(msg);
@@ -105,7 +166,7 @@ void forktest(void)
 
   printf(1, "forktest\n");
 
-  fd = open(fname, O_CREATE|O_RDWR);
+  fd = open(test_file, O_CREATE|O_RDWR);
   check(fd, "open");
 
   addr = mmap(fd, 0, 4096);
@@ -151,35 +212,37 @@ void forktest(void)
   printf(1, "ok\n");
 }
 
-void regionoverlap(void)
+// Different processes should be able to mmap overlapping
+// regions of a file.
+void 
+regionoverlap(void)
 {
   char *msg = "abcdefghijklmnopqrstuv";
   int len = strlen(msg);
   char *addr;
   int fd;
-  int pid;
   int rc;
   int i;
 
-  fd = open(fname, O_CREATE|O_RDWR);
+  printf(1, "regionoverlap\n");
+
+  fd = open(test_file, O_CREATE|O_RDWR);
   check(fd > 0, "open");
 
-  pid = fork();
-  check(pid >= 0, "fork failed");
-  if (pid == 0) {
+  if (fork() == 0) {
 
-    addr = mmap(fd, 4096, 8192);
+    addr = mmap(fd, 4096, 4096);
     check(addr > 0, "mmap from child");
 
     for (i = 0; (i * len) < 4096 - len; i++) {
       memmove(addr + (i * len), msg, len);
     }
 
-    rc = munmap(addr);
-    check(rc == 0, "munmap from child");
+    check(munmap(addr) == 0, "munmap from child");
     close(fd);
     exit();
   }
+  wait();
 
   // Parent's region overlaps but does not equal child's region
   addr = mmap(fd, 0, 8192);
@@ -209,6 +272,7 @@ void regionoverlap(void)
   rc = munmap(addr);
   check(rc == 0, "munmap from parent");
   close(fd);
+
   printf(1, "ok\n");
 }
 
@@ -219,6 +283,8 @@ main(void)
 
   argtest();
   basicrw();
+  unmap();
+  unlinktest();
   forktest();
   regionoverlap();
 

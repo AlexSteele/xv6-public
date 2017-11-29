@@ -484,19 +484,15 @@ sys_mmap(void)
   begin_op();
   ilock(f->ip);
   mapstart = mmap(curproc->pgdir, (void *)curproc->sz, f->ip, off, len);
-  if (!mapstart) {
-    iunlock(f->ip);
-    end_op();
-    return 0;
-  }
-  // TODO: The refcount should be protected by icache.lock.
-  // See iget() in fs.c
-  f->ip->ref++;
   iunlock(f->ip);
   end_op();
 
+  if (!mapstart) {
+    return 0;
+  }
+
   mapping->valid = 1;
-  mapping->ip = f->ip;
+  mapping->fp = filedup(f);
   mapping->vastart = (void *) curproc->sz;
   mapping->len = len;
   mapping->mapstart = mapstart;
@@ -535,10 +531,10 @@ sys_munmap(void)
   begin_op();
   munmap(curproc->pgdir, mapping->vastart, mapping->len, 
       mapping->mapstart);
-  iput(mapping->ip);
+  fileclose(mapping->fp);
   end_op();
 
-  curproc->mmaps[i].valid = 0;
+  mapping->valid = 0;
   return 0;
 }
 

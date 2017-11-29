@@ -18,7 +18,8 @@ pde_t *kpgdir;  // for use in scheduler()
 // Bitmap with an entry for each page of physical
 // memory. Bit i is set if physical page i is mapped
 // into a process' address space AND is owned by the 
-// process (and thus must be freed when the process exits).
+// process (and thus must be freed when the process exits
+// and copied when the process forks).
 static uchar vmmap[1 << 17];
 static struct spinlock vmlock;
 
@@ -145,18 +146,18 @@ struct page *
 mmap(pde_t *pgdir, void *vastart, struct inode *ip, uint off, uint len)
 {
   struct page *mapstart = 0;
-  uint n;
+  uint eoff;
 
   if (off + len < off)
     return 0;
   if (off + len > ip->size)
     extendi(ip, off + len);
 
-  for (n = off + len - PGSIZE; n >= off; n -= PGSIZE) {
+  for (eoff = off + len - PGSIZE; eoff >= off; eoff -= PGSIZE) {
     struct page *pp;
 
-    pp = find_page(ip, n);
-    if (mappages(pgdir, ((void *) vastart + n), PGSIZE, 
+    pp = find_page(ip, eoff);
+    if (mappages(pgdir, ((void *) vastart + eoff - off), PGSIZE, 
           V2P(pp->data), PTE_W|PTE_U)) {
       panic("mmap");
     }
@@ -165,7 +166,7 @@ mmap(pde_t *pgdir, void *vastart, struct inode *ip, uint off, uint len)
     pp->refcnt++;
     mapstart = pp;
     release_page(pp);
-    if (n == 0)
+    if (eoff == 0)
       break; // Avoid unsigned wrap-around
   }
  
@@ -440,13 +441,24 @@ copyuvm(pde_t *pgdir, uint sz)
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walkpgdir(pgdir, (void *) i, 0)) == 0)
       panic("copyuvm: pte should exist");
-    if(!(*pte & PTE_P))
-      panic("copyuvm: page not present");
+    if(!(*pte & PTE_P)) {
+
+      // Page was unmapped by munmap. 
+      continue;
+//      panic("copyuvm: page not present");
+    }
+
     pa = PTE_ADDR(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = vmalloc()) == 0)
-      goto bad;
-    memmove(mem, (char*)P2V(pa), PGSIZE);
+    mem = (char*) P2V(pa);
+
+    // Copy the page only if it's owned by the parent
+    if (vmmap[VMIDX(pa)] & (1 << VMOFF(pa))) {
+      if ((mem = vmalloc()) == 0)
+        goto bad;
+      memmove(mem, (char*)P2V(pa), PGSIZE);
+    }
+
     if(mappages(d, (void*)i, PGSIZE, V2P(mem), flags) < 0)
       goto bad;
   }
