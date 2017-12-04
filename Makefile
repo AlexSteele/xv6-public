@@ -162,6 +162,7 @@ mkfs: mkfs.c fs.h
 UPROGS=\
     _mmaptest\
 	_vmtest\
+	_fstest\
     _myprog\
 	_cat\
 	_echo\
@@ -247,6 +248,7 @@ qemu-nox-gdb: fs.img xv6.img .gdbinit
 EXTRA=\
     mmaptest.c\
 	vmtest.c\
+	fstest.c\
     myprog.c\
 	mkfs.c ulib.c user.h cat.c echo.c forktest.c grep.c kill.c\
 	ln.c ls.c mkdir.c rm.c stressfs.c usertests.c wc.c zombie.c\

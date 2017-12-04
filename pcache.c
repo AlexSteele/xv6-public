@@ -10,69 +10,184 @@
 
 #define NPAGE 32
 
+// Page hash table size
+#define NTABLE 61
+
+/* TODO: Does nblocks ever get reset to 0? */
+
 struct {
   struct spinlock lock;
+
+  // All page cache pages.
   struct page pages[NPAGE];
+
+  // Page hashtable
+  struct page *htable[NTABLE];
+
+  // LRU page list
+  struct page *head;
+  struct page *tail;
 } pcache;
 
 void
 pcacheinit(void)
 {
-  struct page *p;
+  struct page *pp;
 
   initlock(&pcache.lock, "pcache");
-  for (p = pcache.pages; p < pcache.pages + NPAGE; p++) {
-    initsleeplock(&p->lock, "page");
-    p->data = (uchar *) kalloc();
-    if (!p->data) {
+  for (pp = pcache.pages; pp < pcache.pages + NPAGE; pp++) {
+    initsleeplock(&pp->lock, "page");
+    pp->data = (uchar *) kalloc();
+    if (!pp->data) {
       panic("pcacheinit: insufficient pages");
     }
   }
+  
+  // Create LRU list
+  pcache.head = &pcache.pages[0];
+  pcache.pages[0].next = &pcache.pages[1];
+  for (pp = pcache.pages + 1; pp < pcache.pages + NPAGE - 1; pp++) {
+    pp->prev = pp - 1;
+    pp->next = pp + 1;
+  }
+  pcache.tail = pp;
+  pp->prev = pp - 1;
+  pp->next = 0;
+}
+
+static uint
+hash(uint v)
+{
+  // TODO: Better hash :)
+  return v;
+}
+
+static void
+hash_add(uint phash, struct page *pp)
+{
+  uint idx = phash % NTABLE;
+  while (pcache.htable[idx]) {
+    idx = (idx + 1) % NTABLE;
+  }
+  pcache.htable[idx] = pp;
+}
+
+static void
+hash_remove(uint phash, uint start_block)
+{
+  uint idx = phash % NTABLE;
+  while (pcache.htable[idx] &&
+         pcache.htable[idx]->blocknos[0] != start_block) {
+    idx = (idx + 1) % NTABLE;
+  }
+  pcache.htable[idx] = 0;
 }
 
 static struct page *
-_find_page(struct inode *ip, uint off)
+hash_find(uint phash, uint start_block)
+{
+  uint idx = phash % NTABLE;
+  while (pcache.htable[idx] &&
+         pcache.htable[idx]->blocknos[0] != start_block) {
+    idx = (idx + 1) % NTABLE;
+  }
+  return pcache.htable[idx];
+}
+
+static void
+lru_put(struct page *pp)
+{
+  if (!pcache.head) {
+    pcache.head = pp;
+    pcache.tail = pp;
+    return;
+  }
+
+  pp->prev = pcache.tail;
+  pcache.tail->next = pp;
+  pcache.tail = pp;
+}
+
+static void
+lru_remove(struct page *pp)
+{
+  if (pp == pcache.head)
+    pcache.head = pp->next;
+  if (pp == pcache.tail)
+    pcache.tail = pp->prev;
+
+  if (pp->next)
+    pp->next->prev = pp->prev;
+  if (pp->prev)
+    pp->prev->next = pp->next;
+
+  pp->next = 0;
+  pp->prev = 0;
+}
+
+static struct  page*
+lru_pop(void)
+{
+  struct page *pp;
+
+  pp = pcache.head;
+  if (!pp)
+    return 0;
+  if (pp == pcache.tail)
+    pcache.tail = 0;
+  if (pp->next)
+    pp->next->prev = 0;
+
+  pcache.head = pp->next;
+  pp->next = 0;
+  pp->prev = 0;
+
+  return pp;
+}
+
+static struct page *
+lookup(struct inode *ip, uint off)
 {
   uint start_block;
   struct page *pp;
   int i;
+  int h;
 
   off = PGROUNDDOWN(off);
   start_block = bmap(ip, off/BSIZE);
   acquire(&pcache.lock);
 
-  // Check if page is already cached
-  for (pp = pcache.pages; pp < pcache.pages + NPAGE; pp++) {
-    if (pp->blocknos[0] == start_block) {
-      pp->refcnt++;
-      release(&pcache.lock);
-      acquiresleep(&pp->lock);
-      return pp;
-    }
+  if (ip->mrupage &&
+      ip->mrupage->nblocks > 0 &&
+      ip->mrupage->blocknos[0] == start_block) {
+    lru_remove(ip->mrupage);
+    ip->mrupage->refcnt++;
+    release(&pcache.lock);
+    acquiresleep(&ip->mrupage->lock);
+    return ip->mrupage;
   }
 
-  // Otherwise, find an unreferenced page
-  for (pp = pcache.pages + NPAGE - 1; pp >= pcache.pages; pp--) {
-    if (pp->refcnt == 0 && (pp->flags & B_DIRTY) == 0) {
-      break;
-    }
-  }
-  if (pp < pcache.pages) {
-    panic("find_page: no free pages");
+  h = hash(start_block);
+  if ((pp = hash_find(h, start_block)) != 0) {
+    lru_remove(pp);
+    pp->refcnt++;
+    release(&pcache.lock);
+    acquiresleep(&pp->lock);
+    return pp;
   }
 
-  // Update refcnt and release pcache lock before
-  // pinning the file's blocks to avoid deadlock
-  // since bmap() may call iderw() to read ip's 
-  // indirect block from disk. iderw() sleeps so
-  // we can't hold pcache.lock when it's called.
+  pp = lru_pop();
+  if (!pp)
+    panic("pcache: out of pages");
+  if (pp->nblocks > 0)
+    hash_remove(hash(pp->blocknos[0]), pp->blocknos[0]);
+  hash_add(h, pp);
   pp->refcnt = 1;
   release(&pcache.lock);
   acquiresleep(&pp->lock);
 
+  // Reset flags and pin the file's blocks to the page.
   pp->flags = 0;
-
-  // Pin the file's blocks to the page
   pp->blocknos[0] = start_block;
   off += BSIZE;
   for (i = 1; i < 8 && off / BSIZE < MAXFILE; i++) {
@@ -83,57 +198,65 @@ _find_page(struct inode *ip, uint off)
   return pp;
 }
 
-// Synchronize a page with the disk.
-// Caller must hold p->lock.
+// Synchronize a page region with the disk.
+// Caller must hold pp->lock.
 static void
-pagerw(struct page *p)
+pagerw(struct page *pp, uint start, uint end)
 {
+  uint start_block = start / BSIZE;
+  uint end_block = (end + BSIZE - 1) / BSIZE;
   int i;
 
-  // Synchronize each block
-  for (i = 0; i < p->nblocks; i++) {
+  for (i = start_block; i < end_block; i++) {
     struct buf b;
     memset(&b, 0, sizeof(b));
     b.dev = 1;
-    b.flags = p->flags;
-    b.blockno = p->blocknos[i];
-    b.data = p->data + (i * BSIZE);
+    b.flags = pp->flags;
+    b.blockno = pp->blocknos[i];
+    b.data = pp->data + (i * BSIZE);
     iderw(&b);
   }
 
   // Update the page's flags
-  p->flags |= B_VALID;
-  p->flags &= ~B_DIRTY;
+  pp->flags |= B_VALID;
+  pp->flags &= ~B_DIRTY;
 }
 
+// Find or allocate a page in the page cache
+// corresponding to the given file and file offset.
+// ip->lock must be held and ip must be valid.
 struct page *
 find_page(struct inode *ip, uint off)
 {
-  struct page *p;
+  struct page *pp;
 
-  p = _find_page(ip, off);
-  if ((p->flags & B_VALID) == 0) {
-    pagerw(p);
+  pp = lookup(ip, off);
+  if ((pp->flags & B_VALID) == 0) {
+    pagerw(pp, 0, BSIZE*pp->nblocks);
   }
-  return p;
+  ip->mrupage = pp;
+  return pp;
 }
 
-// Write a page to disk. p->lock must be held.
+// Write page contents from offset 'start' to offset 'end' to disk.
+// pp->lock must be held.
 void
-write_page(struct page *p)
+write_page(struct page *pp, uint start, uint end)
 {
-  p->flags |= B_DIRTY;
-  pagerw(p);  
+  pp->flags |= B_DIRTY;
+  pagerw(pp, start, end);
 }
 
 void
-release_page(struct page *p)
+release_page(struct page *pp)
 {
-  if (!holdingsleep(&p->lock)) {
+  if (!holdingsleep(&pp->lock)) {
     panic("release_page");
   }
-  releasesleep(&p->lock);
+  releasesleep(&pp->lock);
   acquire(&pcache.lock);
-  p->refcnt--;
+  pp->refcnt--;
+  if (pp->refcnt == 0)
+    lru_put(pp);
   release(&pcache.lock);
 }

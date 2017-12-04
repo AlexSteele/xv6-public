@@ -151,7 +151,6 @@ mmap(pde_t *pgdir, void *vastart, struct inode *ip, uint off, uint len)
           V2P(pp->data), PTE_P|PTE_W|PTE_U)) {
       panic("mmap: mappages failed");
     }
-    pp->flags |= B_MAPPED;
     pp->refcnt++;
 
     if (pp->mapnext) {
@@ -186,9 +185,9 @@ munmap(pde_t *pgdir, void *vastart, uint len, struct page *mapstart)
     mapstart->refcnt--;
     next = mapstart->mapnext;
     if (mapstart->refcnt == 0) {
-      mapstart->flags &= ~(B_MAPPED);
       mapstart->mapnext = 0;
-      write_page(mapstart);
+      write_page(mapstart, 0, BSIZE*mapstart->nblocks);
+      // TODO: page cache LRU updates?
     }
     releasesleep(&mapstart->lock);
     vastart += PGSIZE;

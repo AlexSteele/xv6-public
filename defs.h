@@ -98,7 +98,7 @@ void            mpinit(void);
 // pcache.c
 void            pcacheinit(void);
 struct page*    find_page(struct inode*, uint);
-void            write_page(struct page*);
+void            write_page(struct page*, uint, uint);
 void            release_page(struct page*);
 
 // picirq.c

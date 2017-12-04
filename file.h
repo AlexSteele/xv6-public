@@ -8,7 +8,6 @@ struct file {
   uint off;
 };
 
-
 // in-memory copy of an inode
 struct inode {
   uint dev;           // Device number
@@ -16,6 +15,7 @@ struct inode {
   int ref;            // Reference count
   struct sleeplock lock; // protects everything below here
   int valid;          // inode has been read from disk?
+  struct page *mrupage; // most recently used page
 
   short type;         // copy of disk inode
   short major;

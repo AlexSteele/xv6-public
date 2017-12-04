@@ -1,5 +1,21 @@
 
-- Handle fork().
-- Fix race on struct page flags.
-- Improve pcache performance.
 
+- Fix race on struct page flags.
+- In itrunc(), invalidate file's page cache pages.
+- Small write performance is terrible.
+- Page fault handler not catching r/w to areas unmapped with munmap.
+- CoW issue seems to be caused by parent not page faulting.
+
+FS Performance
+----------------------------------------
+
+Append Times
+
+page cache:
+
+Size=140 blocks WriteSize=512 Ticks=~1100 Time=~20sec
+Size=32 blocks WriteSize=16 Ticks=~5500
+
+master:
+
+Size=140 blocks Ticks=~1000

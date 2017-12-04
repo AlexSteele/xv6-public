@@ -1,6 +1,6 @@
 
 // An in-memory cache of a sequence of bytes from a file.
-// Caches up to a page of bytes.
+// Caches up to a page of bytes. Valid if nblocks > 0.
 struct page {
   struct sleeplock lock;
   int flags;
@@ -11,6 +11,10 @@ struct page {
   // If this page is part of a memory-mapped
   // file, pointer to the next page in the mapping
   struct page *mapnext;
+
+  // Page cache LRU list
+  struct page *next;
+  struct page *prev;
   uchar *data;
 };
 
