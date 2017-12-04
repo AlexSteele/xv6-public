@@ -6,10 +6,11 @@ struct page;
 struct pipe;
 struct proc;
 struct rtcdate;
-struct spinlock;
 struct sleeplock;
+struct spinlock;
 struct stat;
 struct superblock;
+struct trapframe;
 
 // bio.c
 void            binit(void);
@@ -197,6 +198,7 @@ int             copyout(pde_t*, uint, void*, uint);
 void            clearpteu(pde_t *pgdir, char *uva);
 struct page*    mmap(pde_t*, void*, struct inode*, uint, uint);
 void            munmap(pde_t*, void*, uint, struct page*);
+void            pagefault(struct trapframe*);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))

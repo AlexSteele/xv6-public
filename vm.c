@@ -15,16 +15,11 @@
 extern char data[];  // defined by kernel.ld
 pde_t *kpgdir;  // for use in scheduler()
 
-// Bitmap with an entry for each page of physical
-// memory. Bit i is set if physical page i is mapped
-// into a process' address space AND is owned by the
-// process (and thus must be freed when the process exits
-// and copied when the process forks).
-static uchar vmmap[1 << 17];
+// Reference count for each page of physical memory.
+static uchar pagerefs[1 << 20];
 static struct spinlock vmlock;
 
-#define VMIDX(pa) ((((uint) pa) / PGSIZE) / 8)
-#define VMOFF(pa) ((((uint) pa) / PGSIZE) % 8)
+#define REFIDX(pa) (((uint) pa) / PGSIZE)
 
 void
 vminit(void)
@@ -43,7 +38,7 @@ vmalloc(void)
   va = kalloc();
   if (va) {
     pa = V2P(va);
-    vmmap[VMIDX(pa)] |= (1 << VMOFF(pa));
+    pagerefs[REFIDX(pa)] = 1;
   }
   release(&vmlock);
   return va;
@@ -55,20 +50,14 @@ static void
 vmfree(char *va)
 {
   uint pa = V2P(va);
-  int idx = VMIDX(pa);
-  int off = VMOFF(pa);
 
   acquire(&vmlock);
-  if (vmmap[idx] & (1 << off)) {
-    kfree(va);
-    vmmap[idx] &= ~(1 << off);
-  } else {
-    // TODO: remove
+  if (pagerefs[REFIDX(pa)] == 0)
     panic("vmfree");
-  }
+  if (--pagerefs[REFIDX(pa)] == 0)
+    kfree(va);
   release(&vmlock);
 }
-
 
 // Set up CPU's kernel segment descriptors.
 // Run once on entry on each CPU.
@@ -130,7 +119,8 @@ mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
       return -1;
     if(*pte & PTE_P)
       panic("remap");
-    *pte = pa | perm | PTE_P;
+//    *pte = pa | perm | PTE_P;
+    *pte = pa | perm;
     if(a == last)
       break;
     a += PGSIZE;
@@ -158,7 +148,7 @@ mmap(pde_t *pgdir, void *vastart, struct inode *ip, uint off, uint len)
 
     pp = find_page(ip, eoff);
     if (mappages(pgdir, ((void *) vastart + eoff - off), PGSIZE,
-          V2P(pp->data), PTE_W|PTE_U)) {
+          V2P(pp->data), PTE_P|PTE_W|PTE_U)) {
       panic("mmap: mappages failed");
     }
     pp->flags |= B_MAPPED;
@@ -255,7 +245,7 @@ setupkvm(void)
     panic("PHYSTOP too high");
   for(k = kmap; k < &kmap[NELEM(kmap)]; k++)
     if(mappages(pgdir, k->virt, k->phys_end - k->phys_start,
-                (uint)k->phys_start, k->perm) < 0) {
+                (uint)k->phys_start, k->perm|PTE_P) < 0) {
       freevm(pgdir);
       return 0;
     }
@@ -315,7 +305,7 @@ inituvm(pde_t *pgdir, char *init, uint sz)
     panic("inituvm: more than a page");
   mem = vmalloc();
   memset(mem, 0, PGSIZE);
-  mappages(pgdir, 0, PGSIZE, V2P(mem), PTE_W|PTE_U);
+  mappages(pgdir, 0, PGSIZE, V2P(mem), PTE_P|PTE_W|PTE_U);
   memmove(mem, init, sz);
 }
 
@@ -365,7 +355,7 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
       return 0;
     }
     memset(mem, 0, PGSIZE);
-    if(mappages(pgdir, (char*)a, PGSIZE, V2P(mem), PTE_W|PTE_U) < 0){
+    if(mappages(pgdir, (char*)a, PGSIZE, V2P(mem), PTE_P|PTE_W|PTE_U) < 0){
       cprintf("allocuvm out of memory (2)\n");
       deallocuvm(pgdir, newsz, oldsz);
       vmfree(mem);
@@ -391,9 +381,9 @@ deallocuvm(pde_t *pgdir, uint oldsz, uint newsz)
   a = PGROUNDUP(newsz);
   for(; a  < oldsz; a += PGSIZE){
     pte = walkpgdir(pgdir, (char*)a, 0);
-    if(!pte)
+    if(!pte) {
       a = PGADDR(PDX(a) + 1, 0, 0) - PGSIZE;
-    else if((*pte & PTE_P) != 0){
+    } else if ((*pte & PTE_P) != 0){
       pa = PTE_ADDR(*pte);
       if(pa == 0)
         panic("kfree");
@@ -444,32 +434,32 @@ copyuvm(pde_t *pgdir, uint sz)
   pde_t *d;
   pte_t *pte;
   uint pa, i, flags;
-  char *mem;
 
   if((d = setupkvm()) == 0)
     return 0;
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walkpgdir(pgdir, (void *) i, 0)) == 0)
       panic("copyuvm: pte should exist");
-    if(!(*pte & PTE_P)) {
-
-      // Page was unmapped by munmap.
-      continue;
-//      panic("copyuvm: page not present");
-    }
+    if (*pte == 0)
+      continue; // Page was unmapped by munmap.
 
     pa = PTE_ADDR(*pte);
     flags = PTE_FLAGS(*pte);
-    mem = (char*) P2V(pa);
+    acquire(&vmlock);
+    if (pagerefs[REFIDX(pa)] > 0) {
+      pagerefs[REFIDX(pa)]++;
 
-    // Copy the page only if it's owned by the parent
-    if (vmmap[VMIDX(pa)] & (1 << VMOFF(pa))) {
-      if ((mem = vmalloc()) == 0)
-        goto bad;
-      memmove(mem, (char*)P2V(pa), PGSIZE);
+      // Mark the page as read-only in the parent.
+      *pte &= ~PTE_W;
+
+      // Mark the page as read-only in the child.
+      flags &= ~PTE_W;
     }
+    release(&vmlock);
 
-    if(mappages(d, (void*)i, PGSIZE, V2P(mem), flags) < 0)
+    /* if(mappages(d, (void*)i, PGSIZE, V2P(mem), flags) < 0) */
+    /*   goto bad; */
+    if (mappages(d, (void*)i, PGSIZE, pa, flags) < 0)
       goto bad;
   }
   return d;
@@ -477,6 +467,61 @@ copyuvm(pde_t *pgdir, uint sz)
 bad:
   freevm(d);
   return 0;
+}
+
+// Page fault handler.
+// x86 error code information taken from wiki.osdev.org/Page_Fault.
+void
+pagefault(struct trapframe *tf)
+{
+  struct proc *proc = myproc();
+  uint va = rcr2();
+  pte_t *pte;
+  uint pa;
+  uint flags;
+  char *mem;
+
+  if (proc == 0)
+    panic("pagefault: no proc");
+  if ((tf->err & 0x1) == 0)
+    goto kill; // Page not present
+  if (va >= KERNBASE)
+    goto kill; // Protection violation in kernel space
+  if ((tf->err & 0x2) == 0)
+    panic("pagefault: user-space read");
+  if ((pte = walkpgdir(proc->pgdir, (char*) va, 0)) == 0)
+    panic("pagefault: no pte");
+  if (*pte == 0)
+    panic("pagefault: pte == 0");
+  if ((*pte & PTE_P) == 0)
+    panic("pagefault: page not present");
+
+  pa = PTE_ADDR(*pte);
+  flags = PTE_FLAGS(*pte);
+  mem = (char *) P2V(pa);
+
+  acquire(&vmlock);
+  if (pagerefs[REFIDX(pa)] < 1) {
+    panic("pagefault: page refcount < 1");
+  }
+  if (pagerefs[REFIDX(pa)] > 1) {
+
+    // Another process has the page. Copy it.
+    if ((mem = kalloc()) == 0)
+      panic("pagefault: kalloc()");
+    memmove(mem, (char*)P2V(pa), PGSIZE);
+    pagerefs[REFIDX(pa)]--;
+    pa = V2P(mem);
+    pagerefs[REFIDX(pa)] = 1;
+  }
+  release(&vmlock);
+
+  // Mark the page as writable.
+  *pte = pa | flags | PTE_W;
+  return;
+
+ kill:
+  myproc()->killed = 1;
 }
 
 //PAGEBREAK!
