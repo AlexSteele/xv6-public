@@ -101,6 +101,7 @@ struct page*    find_page(struct inode*, uint);
 void            read_page(struct page*, uint, uint);
 void            write_page(struct page*, uint, uint);
 void            release_page(struct page*);
+void            dup_page(struct page*);
 void            evict_pages(struct inode*);
 
 // picirq.c

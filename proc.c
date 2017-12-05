@@ -176,6 +176,23 @@ growproc(int n)
   return 0;
 }
 
+static void
+dupmap(struct mapping *mmold, struct mapping *mmnew)
+{
+  struct page *pp;
+  uint n;
+
+  memmove(mmnew, mmold, sizeof(struct mapping));
+  mmnew->fp = filedup(mmold->fp);
+
+  // Increment page ref counts
+  pp = mmnew->mapstart;
+  for (n = 0; n < mmnew->len; n += PGSIZE) {
+    dup_page(pp);
+    pp = pp->mapnext;
+  }
+}
+
 // Create a new process copying p as the parent.
 // Sets up stack to return as if from system call.
 // Caller must set state of returned proc to RUNNABLE.
@@ -213,17 +230,11 @@ fork(void)
   }
 
   // Duplicate memory-mapped file regions.
-  // TODO: Sleep lock in fork?
   for (i = 0; i < NOMAP; i++) {
     if (curproc->mmaps[i].valid) {
       struct mapping *mmold = &curproc->mmaps[i];
       struct mapping *mmnew = &np->mmaps[i];
-
-      memmove(mmnew, mmold, sizeof(struct mapping));
-      mmnew->fp = filedup(mmold->fp);
-      acquiresleep(&mmnew->mapstart->lock);
-      mmnew->mapstart->refcnt++;
-      releasesleep(&mmnew->mapstart->lock);
+      dupmap(mmold, mmnew);
     }
   }
 

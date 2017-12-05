@@ -456,8 +456,6 @@ copyuvm(pde_t *pgdir, uint sz)
     }
     release(&vmlock);
 
-    /* if(mappages(d, (void*)i, PGSIZE, V2P(mem), flags) < 0) */
-    /*   goto bad; */
     if (mappages(d, (void*)i, PGSIZE, pa, flags) < 0)
       goto bad;
   }

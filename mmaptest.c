@@ -40,7 +40,7 @@ basicrw(void)
   char *msg = "abcdefghijklmnopqrstuvwxyz";
   char *msg2 = "zyxwvutsrqponmlkjihgfedcba";
   int len = strlen(msg)+1;
-  int niter = 256;
+  int niter = 128;
   int fd;
   int i;
   char *addr;
@@ -104,7 +104,6 @@ unmap(void)
     check(munmap(addr) == 0, "munmap");
 
     // This should cause a page fault
-    printf(1, "should see page fault\n");
     addr[0] = 'a';
 
     check(0, "able to access unmapped region");

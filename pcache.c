@@ -298,6 +298,14 @@ release_page(struct page *pp)
   release(&pcache.lock);
 }
 
+void
+dup_page(struct page *pp)
+{
+  acquire(&pcache.lock);
+  pp->refcnt++;
+  release(&pcache.lock);
+}
+
 // Evict all cached pages for a file.
 void
 evict_pages(struct inode *ip)
