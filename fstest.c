@@ -18,9 +18,9 @@ check(int cond, char *s)
 int
 strncmp(char *s1, char *s2, int n)
 {
-  while (n-- && *s1 && *s1 == *s2)
-    s1++, s2++;
-  return (uchar)*s1 - (uchar)*s2;
+  while (n && *s1 && *s1 == *s2)
+    s1++, s2++, n--;
+  return n == 0 ? 0 : (uchar)*s1 - (uchar)*s2;
 }
 
 void
@@ -30,7 +30,7 @@ genericwrites(char *fname, int nblocks, int wsize)
   int i;
   int start;
   int end;
-  
+
   printf(1, "nblocks=%d\n", nblocks);
   printf(1, "wsize=%d\n", wsize);
 
@@ -46,7 +46,7 @@ genericwrites(char *fname, int nblocks, int wsize)
       while (n < wsize) {
         check((nw = write(fd, buf + n, wsize - n)) > 0, "write");
         n += nw;
-      }      
+      }
     }
   }
   end = uptime();
@@ -143,6 +143,80 @@ dirtest(void)
   printf(1, "ok\n");
 }
 
+// Writes should be reliable even under heavy file system activity.
+void
+hotfiles(void)
+{
+  int nprocs = 8;
+  int pid;
+  int i;
+  int fds[10];
+
+  printf(1, "hotfiles test\n");
+
+  memset(buf, 'a', sizeof(buf));
+
+  for (i = 0; i < sizeof(fds)/sizeof(int); i++) {
+    char name[] = "hotx";
+    name[strlen(name)-1] = i;
+    fds[i] = open(name, O_CREATE|O_RDWR);
+    check(fds[i] > 0, "open");
+  }
+
+  for (i = 0; i < nprocs; i++) {
+    check((pid = fork()) >= 0, "fork");
+    if (pid == 0) {
+      break;
+    }
+  }
+  if (pid == 0) {
+    char name[] = "px";
+    int fd;
+    name[strlen(name)-1] = (char) getpid();
+    memset(buf, (char) getpid(), sizeof(buf));
+    for (i = 0; i < sizeof(fds)/sizeof(int); i++) {
+      check(write(fds[i], buf, 32) > 0, "write");
+    }
+    // Create process-local file.
+    check((fd = open(name, O_CREATE|O_RDWR)) > 0, "open");
+    for (i = 0; i < sizeof(fds)/sizeof(int); i++) {
+      check(write(fds[i], buf, 32) > 0, "write");
+    }
+    // Write to it.
+    for (i = 0; i < 4; i++) {
+      check(write(fd, buf, sizeof(buf)) == sizeof(buf), "write");
+    }
+    // Close it.
+    check(close(fd) == 0, "close");
+    for (i = 0; i < sizeof(fds)/sizeof(int); i++) {
+      check(write(fds[i], buf, 32) > 0, "write");
+    }
+    // Open it.
+    check((fd = open(name, O_RDONLY)) > 0, "open");
+    for (i = 0; i < sizeof(fds)/sizeof(int); i++) {
+      check(write(fds[i], buf, 32) > 0, "write");
+    }
+    // Check that reads are accurate.
+    for (i = 0; i < 4; i++) {
+      check(read(fd, buf2, sizeof(buf2)) == sizeof(buf2), "read");
+      check(strncmp(buf, buf2, sizeof(buf)) == 0, "strncmp failed");
+    }
+    check(close(fd) == 0, "close");
+    check(unlink(name) == 0, "unlink");
+    exit();
+  }
+  while (wait() >= 0)
+    ;
+  for (i = 0; i < sizeof(fds)/sizeof(int); i++) {
+    char name[] = "hotx";
+    name[strlen(name)-1] = i;
+    check(close(fds[i]) == 0, "close");
+    check(unlink(name) == 0, "unlink");
+  }
+
+  printf(1, "ok\n");
+}
+
 int
 main(void)
 {
@@ -150,8 +224,9 @@ main(void)
 
   basicrw();
   dirtest();
+  hotfiles();
   blockwrites();
-  smallwrites();
+  /* smallwrites(); */
 
   printf(1, "success\n");
   exit();

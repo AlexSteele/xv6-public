@@ -82,7 +82,7 @@ forkwrite1(void)
     exit();
   }
   check((wait() >= 0), "wait");
-  
+
   check(a == 3, "a changed");
   check(buf[0] == 0, "buf changed");
   for (i = 0; i < npages*4096; i++) {
@@ -101,19 +101,19 @@ forkwrite2(void)
   int pid;
   int fds[2];
   char *mem;
-  
+
   printf(1, "forkwrite2 test\n");
 
   check((mem = sbrk(4096)) != (char*)-1, "sbrk (1)");
   memset(mem, 0, 4096);
-  
+
   check((pipe(fds) == 0), "pipe");
   check((pid = fork()) >= 0, "fork");
 
   if (pid == 0) {
     char c;
     int i;
-    
+
     check(close(fds[1]) == 0, "close");
 
     // Wait for parent.
@@ -165,9 +165,9 @@ forkrace(void)
   for (i = 0; i < iters; i++) {
     a = 3;
     memset(mem, 0, 4096);
-    
+
     check((pid = fork()) >= 0, "fork");
-    
+
     if (pid == 0) {
       check(a == 3, "a changed (child)");
       check(mem[0] == 0, "mem changed (child 1)");
@@ -201,9 +201,9 @@ forkrace(void)
     }
     check(wait() >= 0, "wait");
   }
-  
+
   check(sbrk(-4096) != (char*)-1, "sbrk (2)");
-  
+
   printf(1, "ok\n");
 }
 
@@ -255,6 +255,25 @@ forkdeep(void)
   printf(1, "ok\n");
 }
 
+void
+exectest(void)
+{
+  int pid;
+
+  printf(1, "exectest\n");
+  printf(1, "should see: 'hello world'\n");
+
+  check((pid = fork()) >= 0, "fork");
+  if (pid == 0) {
+    char *argv[] = {"echo", "hello", "world", 0};
+    exec("echo", argv);
+    check(0, "exec failed");
+  }
+  check(wait() > 0, "wait");
+
+  printf(1, "ok\n");
+}
+
 int
 main(void)
 {
@@ -265,6 +284,7 @@ main(void)
   forkwrite2();
   forkrace();
   forkdeep();
+  exectest();
 
   printf(1, "PASS\n");
   exit();
