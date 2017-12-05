@@ -340,6 +340,7 @@ iput(struct inode *ip)
     release(&icache.lock);
     if(r == 1){
       // inode has no links and no other references: truncate and free.
+      evict_pages(ip);
       itrunc(ip);
       ip->type = 0;
       iupdate(ip);

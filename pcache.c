@@ -19,13 +19,17 @@ struct {
   // All page cache pages.
   struct page pages[NPAGE];
 
-  // Page hashtable
+  // Page hashtable. Pages are hashed by their first
+  // block number. Only valid pages are kept in the table.
   struct page *htable[NTABLE];
 
-  // LRU page list
+  // LRU page list. A page in the list may be
+  // valid or invalid, but its ref count must be 0.
   struct page *head;
   struct page *tail;
 } pcache;
+
+static void lru_push_back(struct page *);
 
 void
 pcacheinit(void)
@@ -40,17 +44,10 @@ pcacheinit(void)
       panic("pcacheinit: insufficient pages");
     }
   }
-  
-  // Create LRU list
-  pcache.head = &pcache.pages[0];
-  pcache.pages[0].next = &pcache.pages[1];
-  for (pp = pcache.pages + 1; pp < pcache.pages + NPAGE - 1; pp++) {
-    pp->prev = pp - 1;
-    pp->next = pp + 1;
+
+  for (pp = pcache.pages; pp < pcache.pages + NPAGE; pp++) {
+    lru_push_back(pp);
   }
-  pcache.tail = pp;
-  pp->prev = pp - 1;
-  pp->next = 0;
 }
 
 static uint
@@ -60,40 +57,62 @@ hash(uint v)
   return v;
 }
 
+static struct page**
+hash_find_entry(uint phash, uint start_block)
+{
+  uint idx = phash % NTABLE;
+  while (pcache.htable[idx] &&
+         pcache.htable[idx]->blocknos[0] != start_block) {
+    idx = (idx + 1) % NTABLE;
+  }
+  return &pcache.htable[idx];
+}
+
 static void
 hash_add(uint phash, struct page *pp)
 {
-  uint idx = phash % NTABLE;
-  while (pcache.htable[idx]) {
-    idx = (idx + 1) % NTABLE;
-  }
-  pcache.htable[idx] = pp;
+  struct page **entry;
+
+  entry = hash_find_entry(phash, pp->blocknos[0]);
+  if (*entry)
+    panic("pcache: page already in htable");
+  *entry = pp;
 }
 
 static void
 hash_remove(uint phash, uint start_block)
 {
-  uint idx = phash % NTABLE;
-  while (pcache.htable[idx] &&
-         pcache.htable[idx]->blocknos[0] != start_block) {
-    idx = (idx + 1) % NTABLE;
-  }
-  pcache.htable[idx] = 0;
+  struct page **entry;
+
+  entry = hash_find_entry(phash, start_block);
+  *entry = 0;
 }
 
 static struct page *
 hash_find(uint phash, uint start_block)
 {
-  uint idx = phash % NTABLE;
-  while (pcache.htable[idx] &&
-         pcache.htable[idx]->blocknos[0] != start_block) {
-    idx = (idx + 1) % NTABLE;
-  }
-  return pcache.htable[idx];
+  struct page **entry;
+
+  entry = hash_find_entry(phash, start_block);
+  return *entry;
 }
 
 static void
-lru_put(struct page *pp)
+lru_push_front(struct page *pp)
+{
+  if (!pcache.head) {
+    pcache.head = pp;
+    pcache.tail = pp;
+    return;
+  }
+
+  pp->next = pcache.head;
+  pcache.head->prev = pp;
+  pcache.head = pp;
+}
+
+static void
+lru_push_back(struct page *pp)
 {
   if (!pcache.head) {
     pcache.head = pp;
@@ -123,7 +142,7 @@ lru_remove(struct page *pp)
   pp->prev = 0;
 }
 
-static struct  page*
+static struct page*
 lru_pop(void)
 {
   struct page *pp;
@@ -179,13 +198,17 @@ lookup(struct inode *ip, uint off)
     panic("pcache: out of pages");
   if (pp->nblocks > 0)
     hash_remove(hash(pp->blocknos[0]), pp->blocknos[0]);
-  hash_add(h, pp);
+
+  // Must pin blocknos[0] before releasing pcache.lock
+  pp->blocknos[0] = start_block;
   pp->refcnt = 1;
+
+  hash_add(h, pp);
+
   release(&pcache.lock);
   acquiresleep(&pp->lock);
 
   // Reset flags and pin the file's blocks to the page.
-  pp->blocknos[0] = start_block;
   off += BSIZE;
   for (i = 1; i < 8 && off / BSIZE < MAXFILE; i++) {
     pp->blocknos[i] = bmap(ip, off/BSIZE);
@@ -212,8 +235,8 @@ pagerw(struct page *pp, int block)
   pp->flags[block] &= ~B_DIRTY;
 }
 
-// Find or allocate a page in the page cache
-// corresponding to the given file and file offset.
+// Find or allocate a page in the page cache for the
+// given file and file offset.
 // ip->lock must be held and ip must be valid.
 struct page *
 find_page(struct inode *ip, uint off)
@@ -225,7 +248,7 @@ find_page(struct inode *ip, uint off)
   return pp;
 }
 
-// Read a portion of a page's contents from disk if necessary.
+// Read a portion of a page from disk if necessary.
 // pp->lock must be held.
 void
 read_page(struct page *pp, uint start, uint end)
@@ -241,7 +264,7 @@ read_page(struct page *pp, uint start, uint end)
   }
 }
 
-// Write page contents from offset 'start' to offset 'end' to disk.
+// Write a portion of a page to disk.
 // pp->lock must be held.
 void
 write_page(struct page *pp, uint start, uint end)
@@ -266,6 +289,35 @@ release_page(struct page *pp)
   acquire(&pcache.lock);
   pp->refcnt--;
   if (pp->refcnt == 0)
-    lru_put(pp);
+    lru_push_back(pp);
   release(&pcache.lock);
+}
+
+// Evict all cached pages for a file.
+void
+evict_pages(struct inode *ip)
+{
+  int off;
+  int blockno;
+  struct page **hash_entry;
+  struct page *pp;
+
+  for (off = 0; off < ip->size; off += PGSIZE) {
+    blockno = bmap(ip, off/BSIZE);
+    acquire(&pcache.lock);
+    hash_entry = hash_find_entry(hash(blockno), blockno);
+    if ((pp = *hash_entry)) {
+      if (pp->refcnt > 0)
+        panic("evict_pages: page has active refs");
+
+      // The page is cached.
+      // Evict it and place it the at head of LRU list.
+      pp->nblocks = 0;
+      lru_remove(pp);
+      lru_push_front(pp);
+      *hash_entry = 0;
+
+    }
+    release(&pcache.lock);
+  }
 }
