@@ -51,10 +51,15 @@ pcacheinit(void)
 }
 
 static uint
-hash(uint v)
+hash(uint x)
 {
-  // TODO: Better hash :)
-  return v;
+  // Taken from
+  //   https://stackoverflow.com/questions/664014/
+  //   what-integer-hash-function-are-good-that-accepts-an-integer-hash-key
+  x = ((x >> 16) ^ x) * 0x45d9f3b;
+  x = ((x >> 16) ^ x) * 0x45d9f3b;
+  x = (x >> 16) ^ x;
+  return x;
 }
 
 static struct page**
