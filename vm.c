@@ -459,6 +459,7 @@ copyuvm(pde_t *pgdir, uint sz)
     if (mappages(d, (void*)i, PGSIZE, pa, flags) < 0)
       goto bad;
   }
+  switchuvm(myproc());
   return d;
 
 bad:
@@ -515,6 +516,7 @@ pagefault(struct trapframe *tf)
 
   // Mark the page as writable.
   *pte = pa | flags | PTE_W;
+  switchuvm(proc);
   return;
 
  kill:
