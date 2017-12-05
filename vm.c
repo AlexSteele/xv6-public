@@ -16,6 +16,9 @@ extern char data[];  // defined by kernel.ld
 pde_t *kpgdir;  // for use in scheduler()
 
 // Reference count for each page of physical memory.
+// pagerefs[i] > 0 if page i was allocated by the vm
+// subsystem (not the page cache) and is currently
+// mapped into a process' address space.
 static uchar pagerefs[1 << 20];
 static struct spinlock vmlock;
 
@@ -136,37 +139,36 @@ mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
 struct page *
 mmap(pde_t *pgdir, void *vastart, struct inode *ip, uint off, uint len)
 {
-  struct page *mapstart = 0;
-  uint eoff;
+  struct page *start = 0;
+  struct page *prev = 0;
+  struct page *curr;
+  uint end = off + len;
+  uint n;
 
-  if (off + len < off)
+  if (end < off)
     return 0;
-  if (off + len > ip->size)
-    extendi(ip, off + len);
+  if (end > ip->size)
+    extendi(ip, end);
 
-  for (eoff = off + len - PGSIZE; eoff >= off; eoff -= PGSIZE) {
-    struct page *pp;
-
-    pp = find_page(ip, eoff);
-    read_page(pp, 0, BSIZE*pp->nblocks);
-    if (mappages(pgdir, ((void *) vastart + eoff - off), PGSIZE,
-          V2P(pp->data), PTE_P|PTE_W|PTE_U)) {
+  for (n = 0; n < len; n += PGSIZE) {
+    curr = find_page(ip, off + n);
+    read_page(curr, 0, BSIZE*curr->nblocks);
+    if (mappages(pgdir, ((void *) vastart + n), PGSIZE,
+                 V2P(curr->data), PTE_P|PTE_W|PTE_U)) {
       panic("mmap: mappages failed");
     }
-    pp->refcnt++;
-    if (pp->mapnext) {
-      if (mapstart && pp->mapnext != mapstart)
+    curr->refcnt++;
+    if (prev) {
+      if (prev->mapnext && prev->mapnext != curr)
         panic("mmap: inconsistent mappings");
+      prev->mapnext = curr;
     } else {
-      pp->mapnext = mapstart;
+      start = curr;
     }
-    mapstart = pp;
-    release_page(pp);
-    if (eoff == 0)
-      break; // Avoid unsigned wrap-around
+    prev = curr;
+    release_page(curr);
   }
-
-  return mapstart;
+  return start;
 }
 
 void
@@ -174,23 +176,21 @@ munmap(pde_t *pgdir, void *vastart, uint len, struct page *mapstart)
 {
   struct page *next;
   pte_t *pte;
+  uint n;
 
-  for (; len > 0; len -= PGSIZE) {
+  for (n = 0; n < len; n += PGSIZE) {
     if (!mapstart)
       panic("munmap: missing page");
-    if ((pte = walkpgdir(pgdir, vastart, 0)) == 0)
+    if ((pte = walkpgdir(pgdir, vastart + n, 0)) == 0)
       panic("munmap: missing pte");
     *pte = 0;
     acquiresleep(&mapstart->lock);
-    mapstart->refcnt--;
     next = mapstart->mapnext;
-    if (mapstart->refcnt == 0) {
+    if (mapstart->refcnt == 1) {
       mapstart->mapnext = 0;
       write_page(mapstart, 0, BSIZE*mapstart->nblocks);
-      // TODO: page cache LRU updates?
     }
-    releasesleep(&mapstart->lock);
-    vastart += PGSIZE;
+    release_page(mapstart);
     mapstart = next;
   }
 }
