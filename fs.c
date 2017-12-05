@@ -468,7 +468,7 @@ stati(struct inode *ip, struct stat *st)
 int
 readi(struct inode *ip, char *dst, uint off, uint n)
 {
-  uint tot, m;
+  uint tot, m, pageoff;
   struct page *pp;
 
   if(ip->type == T_DEV){
@@ -484,8 +484,10 @@ readi(struct inode *ip, char *dst, uint off, uint n)
 
   for (tot = 0; tot < n; tot += m, off += m, dst += m) {
     pp = find_page(ip, off);
-    m = min(n - tot, PGSIZE - (off%PGSIZE));
-    memmove(dst, pp->data + (off%PGSIZE), m);
+    pageoff = off%PGSIZE;
+    m = min(n - tot, PGSIZE - pageoff);
+    read_page(pp, pageoff, pageoff + m);
+    memmove(dst, pp->data + pageoff, m);
     release_page(pp);
   }
 
@@ -516,6 +518,7 @@ writei(struct inode *ip, char *src, uint off, uint n)
     pp = find_page(ip, off);
     pageoff = off%PGSIZE;
     m = min(n - tot, PGSIZE - pageoff);
+    read_page(pp, pageoff, pageoff + m);
     memmove(pp->data + pageoff, src, m);
     write_page(pp, pageoff, pageoff + m);
     release_page(pp);

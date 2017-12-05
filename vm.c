@@ -130,6 +130,7 @@ mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
 }
 
 // Map a file region into an address space.
+// Returns the first page in the mapped region.
 // off and len must be page size multiples.
 // Must be called with ip->lock held.
 struct page *
@@ -147,19 +148,18 @@ mmap(pde_t *pgdir, void *vastart, struct inode *ip, uint off, uint len)
     struct page *pp;
 
     pp = find_page(ip, eoff);
+    read_page(pp, 0, BSIZE*pp->nblocks);
     if (mappages(pgdir, ((void *) vastart + eoff - off), PGSIZE,
           V2P(pp->data), PTE_P|PTE_W|PTE_U)) {
       panic("mmap: mappages failed");
     }
     pp->refcnt++;
-
     if (pp->mapnext) {
       if (mapstart && pp->mapnext != mapstart)
         panic("mmap: inconsistent mappings");
     } else {
       pp->mapnext = mapstart;
     }
-
     mapstart = pp;
     release_page(pp);
     if (eoff == 0)

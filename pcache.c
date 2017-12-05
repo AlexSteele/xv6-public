@@ -13,8 +13,6 @@
 // Page hash table size
 #define NTABLE 61
 
-/* TODO: Does nblocks ever get reset to 0? */
-
 struct {
   struct spinlock lock;
 
@@ -187,39 +185,31 @@ lookup(struct inode *ip, uint off)
   acquiresleep(&pp->lock);
 
   // Reset flags and pin the file's blocks to the page.
-  pp->flags = 0;
   pp->blocknos[0] = start_block;
   off += BSIZE;
   for (i = 1; i < 8 && off / BSIZE < MAXFILE; i++) {
     pp->blocknos[i] = bmap(ip, off/BSIZE);
+    pp->flags[i] = 0;
     off += BSIZE;
   }
   pp->nblocks = i;
   return pp;
 }
 
-// Synchronize a page region with the disk.
+// Synchronize block of pp with the disk.
 // Caller must hold pp->lock.
 static void
-pagerw(struct page *pp, uint start, uint end)
+pagerw(struct page *pp, int block)
 {
-  uint start_block = start / BSIZE;
-  uint end_block = (end + BSIZE - 1) / BSIZE;
-  int i;
+  struct buf b;
 
-  for (i = start_block; i < end_block; i++) {
-    struct buf b;
-    memset(&b, 0, sizeof(b));
-    b.dev = 1;
-    b.flags = pp->flags;
-    b.blockno = pp->blocknos[i];
-    b.data = pp->data + (i * BSIZE);
-    iderw(&b);
-  }
-
-  // Update the page's flags
-  pp->flags |= B_VALID;
-  pp->flags &= ~B_DIRTY;
+  b.dev = 1;
+  b.blockno = pp->blocknos[block];
+  b.flags = pp->flags[block];
+  b.data = pp->data + (block * BSIZE);
+  iderw(&b);
+  pp->flags[block] |= B_VALID;
+  pp->flags[block] &= ~B_DIRTY;
 }
 
 // Find or allocate a page in the page cache
@@ -231,11 +221,24 @@ find_page(struct inode *ip, uint off)
   struct page *pp;
 
   pp = lookup(ip, off);
-  if ((pp->flags & B_VALID) == 0) {
-    pagerw(pp, 0, BSIZE*pp->nblocks);
-  }
   ip->mrupage = pp;
   return pp;
+}
+
+// Read a portion of a page's contents from disk if necessary.
+// pp->lock must be held.
+void
+read_page(struct page *pp, uint start, uint end)
+{
+  uint start_block = start / BSIZE;
+  uint end_block = (end + BSIZE - 1) / BSIZE;
+  int block;
+
+  for (block = start_block; block < end_block; block++) {
+    if ((pp->flags[block] & B_VALID) == 0) {
+      pagerw(pp, block);
+    }
+  }
 }
 
 // Write page contents from offset 'start' to offset 'end' to disk.
@@ -243,8 +246,14 @@ find_page(struct inode *ip, uint off)
 void
 write_page(struct page *pp, uint start, uint end)
 {
-  pp->flags |= B_DIRTY;
-  pagerw(pp, start, end);
+  uint start_block = start / BSIZE;
+  uint end_block = (end + BSIZE - 1) / BSIZE;
+  int block;
+
+  for (block = start_block; block < end_block; block++) {
+    pp->flags[block] |= B_DIRTY;
+    pagerw(pp, block);
+  }
 }
 
 void
